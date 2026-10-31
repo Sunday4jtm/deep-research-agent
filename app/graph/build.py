@@ -1,0 +1,57 @@
+"""StateGraph 装配与研究入口。
+
+为什么图由工厂函数装配（闭包注入 sink）：同一张图既能接 UI 的事件流，
+也能接测试的 ListSink——三端共用一份编排逻辑，不复制粘贴。
+"""
+from __future__ import annotations
+
+from langgraph.graph import END, StateGraph
+
+from app.config import get_settings
+from app.contracts import (
+    EVENT_RESEARCH_STARTED,
+    AgentEvent,
+    EventSink,
+    ListSink,
+)
+from app.graph.nodes import (
+    make_plan_node,
+    make_retrieve_node,
+    make_synth_node,
+    make_verify_node,
+)
+from app.graph.state import ResearchState
+
+
+def route_after_verify(state: ResearchState) -> str:
+    """条件边：有缺口且未到熔断轮数 → 回检索；否则进综合。"""
+    settings = get_settings()
+    if state.get("gaps") and state.get("round", 0) < settings.max_rounds:
+        return "retrieve"
+    return "synthesize"
+
+
+def build_research_app(sink: EventSink):
+    """装配研究图。节点顺序：规划 → 检索 → 验证 →（回环）→ 综合。"""
+    graph = StateGraph(ResearchState)
+    graph.add_node("planner", make_plan_node(sink))
+    graph.add_node("retriever", make_retrieve_node(sink))
+    graph.add_node("verifier", make_verify_node(sink))
+    graph.add_node("synthesizer", make_synth_node(sink))
+    graph.set_entry_point("planner")
+    graph.add_edge("planner", "retriever")
+    graph.add_edge("retriever", "verifier")
+    graph.add_conditional_edges(
+        "verifier", route_after_verify, {"retrieve": "retriever", "synthesize": "synthesizer"}
+    )
+    graph.add_edge("synthesizer", END)
+    return graph.compile()
+
+
+def run_research(question: str, focus: str = "", sink: EventSink | None = None) -> dict:
+    """同步入口：一次研究 = 一个完整的图执行。返回最终 State。"""
+    active_sink = sink if sink is not None else ListSink()
+    active_sink.emit(AgentEvent(EVENT_RESEARCH_STARTED, {"question": question}))
+    app = build_research_app(active_sink)
+    final = app.invoke({"question": question, "focus": focus}, config={"recursion_limit": 50})
+    return dict(final)

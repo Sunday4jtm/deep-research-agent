@@ -32,10 +32,15 @@ LangGraph 编排的多跳研究 Agent（面试作品）。私有知识库与公�
 ```
 app/config.py        全局配置（.env 加载，离线安全）
 app/llm.py           双模型 + 回退（加锁单飞）
+app/contracts.py     事件契约 v1（三端共用，改动=三端同步）
 app/tools/base.py    ToolProvider 协议 + Evidence（引用编号来源）
 app/tools/fake.py    确定性离线实现（CI/评测/陌生人复现）
 app/tools/direct.py  直连实现（D4/D6 填）
-app/graph/           LangGraph 状态机（D2 起）
+app/graph/state.py   ResearchState 全字段（PLAN §3.2）
+app/graph/nodes.py   图节点工厂（D2 骨架，D3~D5 换 LLM 版）
+app/graph/build.py   StateGraph 装配 + run_research 入口
 scripts/preflight.py Provider 真实预检（P0）
+scripts/spike_*      P0 两个 hello-world spike（MCP/Langfuse）
 tests/               全离线测试
+.github/workflows/   GitHub Actions CI（离线）
 ```

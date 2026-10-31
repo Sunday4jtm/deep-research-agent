@@ -81,12 +81,16 @@ class FakeProvider:
     """确定性假工具：同查询永远同结果，测试可断言、演示可离线。"""
 
     def web_search(self, query: str, k: int = 3) -> list[Evidence]:
+        if query.startswith("EMPTY::"):
+            return []  # 测试钩子：验证"证据缺失 → 追问回环"路径
         return _pick(_FAKE_WEB, _WEB_FALLBACK, query)[:k]
 
     def web_fetch(self, url: str) -> str:
         return f"（FakeProvider 固定正文）页面 {url} 的离线示例内容。"
 
     def kb_search(self, query: str, k: int = 3) -> list[Evidence]:
+        if query.startswith("EMPTY::"):
+            return []
         return _pick(_FAKE_KB, _KB_FALLBACK, query)[:k]
 
     def kb_status(self) -> dict:
