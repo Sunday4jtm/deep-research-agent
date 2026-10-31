@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # 提交前密钥扫描（继承老项目 pre-commit 的"密钥检测"纪律）。
-# 只查 staged 文件；.env 本身在 .gitignore 里，不会出现在 staged 列表。
+# 默认只查 staged 文件；--all 扫全部跟踪文件（CI 用——CI 上没有 staged 概念，
+# 且旧的内联 grep 写法命中密钥反而退出 0，扫描永远绿灯形同虚设，评审 P0-2）。
+# .env 本身在 .gitignore 里，两种模式都扫不到它。
 # 命中即退出 1，阻止提交——误报时可用 GIT_ALLOW_SECRET=1 临时放行并人工确认。
 set -euo pipefail
 
@@ -9,7 +11,11 @@ if [[ "${GIT_ALLOW_SECRET:-0}" == "1" ]]; then
   exit 0
 fi
 
-files=$(git diff --cached --name-only --diff-filter=ACM)
+if [[ "${1:-}" == "--all" ]]; then
+  files=$(git ls-files)
+else
+  files=$(git diff --cached --name-only --diff-filter=ACM)
+fi
 [[ -z "$files" ]] && exit 0
 
 pattern='sk-[A-Za-z0-9]{16,}|[a-f0-9]{32,}|[A-Za-z0-9]{28}\.[A-Za-z0-9]{8}'

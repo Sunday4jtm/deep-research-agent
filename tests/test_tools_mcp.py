@@ -13,7 +13,7 @@ from __future__ import annotations
 import pytest
 
 from app.config import get_settings
-from app.tools import get_provider
+from app.tools import get_provider, reset_provider_cache
 from app.tools.direct import CircuitOpen, WebSearchError
 from app.tools.mcp_provider import MCPProvider, _McpSession
 
@@ -37,10 +37,16 @@ class _StubSession:
 
 @pytest.fixture()
 def mcp_mode(monkeypatch: pytest.MonkeyPatch):
-    """切到 mcp 模式并清 get_settings 缓存；teardown 再清一次防泄漏到别的测试。"""
+    """切到 mcp 模式并清两处缓存（settings + provider 单例）；teardown 再清防泄漏。
+
+    get_provider 现在按模式缓存单例（评审 P0-1）：不 reset 的话，
+    本 fixture 缓存的 MCPProvider 会带着旧的 MCP_WEB_CMD 活到别的测试。
+    """
     monkeypatch.setenv("PROVIDER_MODE", "mcp")
     get_settings.cache_clear()
+    reset_provider_cache()
     yield
+    reset_provider_cache()
     get_settings.cache_clear()
 
 
@@ -282,3 +288,26 @@ def test_初始化失败后回滚且可重试(monkeypatch):
     with pytest.raises(RuntimeError):
         session._ensure()
     assert calls["n"] == 2
+
+
+# ============================================================
+# 7. 单例与收尾（评审 P0-1 修复配套）
+# ============================================================
+def test_get_provider_mcp模式下返回同一实例(mcp_mode):
+    """图每轮 retrieve 都调 get_provider()：不缓存的话每轮拉起 A/B 两个
+    子进程且无人回收（D7 后翻倍），direct 侧熔断计数也会随实例清零。"""
+    assert get_provider() is get_provider()
+
+
+def test_close对未初始化会话幂等无害():
+    """close 必须能安全走 atexit：未初始化/已关闭都是 no-op，不能抛错。"""
+    session = _McpSession(["/bin/echo"])
+    session.close()
+    session.close()
+    assert session._loop is None and session._session is None
+
+
+def test_provider_close_未连接时无害():
+    """工厂 reset 会调 close()：provider 从未真正连接过时不能炸。"""
+    MCPProvider().close()
+    assert MCPProvider()._web is None and MCPProvider()._kb is None

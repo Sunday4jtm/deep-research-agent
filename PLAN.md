@@ -134,7 +134,7 @@ report_delta{text} / warning{code,msg} / citation_checked{...} / done{citation_r
 | D5 | synthesizer + **citation pass** + Streamlit（事件契约消费端）+ token_usage 展示 | ✅ 中期检查点：带引用报告 + 引用 100% 可映射 |
 | D6 ✅（2026-10-31） | 老仓库 `/api/kb/search`（X-API-Token + 契约表 + 守卫测试同步）+ MCP Server A + MCPProvider 切换；另落地 DirectProvider.kb（HTTP 兜底，Q4）与 `MCP_WEB_CMD`/`KB_API_TOKEN` 开关 | MCP 取证路径跑通 |
 | D7 ✅（2026-10-31） | MCP Server B（`ai_study` env，`KB_CHROMA_DIR` 重定向 demo/私有库）+ MCPProvider 接 kb_search/kb_status（kb 熔断独立）+ chunk 级 locator（防同文件多块被去重误吞）+ SDK 最小环境白名单转发 | ✅ 报告同时引用私有与公网来源；D7_KB_ROUNDTRIP_PASS（demo 库 18 块真实命中） |
-| D8 | verifier（gaps 回环 + 冲突标记）+ **FastAPI SSE 网关**（事件契约落地）+ Streamlit 改客户端 | ✅ 追问回环生效；三端共用契约 |
+| D8 ✅（2026-11-01） | verifier（gaps 回环真转：gap 允许跨轮重试 + 跨源指标分歧启发式标记）+ **FastAPI SSE 网关**（api/main.py，事件契约出网）+ Streamlit 改双模式客户端（UI_MODE=gateway\|inline） | ✅ 追问回环生效（离线测试证明 gap 第二轮重试成功）；三端共用契约 |
 | D9 | Langfuse 接入 + **masking** + 从 trace 修一个真实瓶颈（留前后对比） | ✅ 追踪面板 + 修复案例 |
 | D10 | **MODE=single 基线** + 评测公式落地 + gold conflict/insufficient 夹具 + 10 题 × 2 模式 × 2 次 | ✅ 功能冻结：对照表初版 |
 | D11 | README（对标老项目水准）+ 架构图 + 发布检查（密钥扫描/env.example/GIF）+ LICENSE | ✅ **可发布版本**（无 Next.js 也可投递） |

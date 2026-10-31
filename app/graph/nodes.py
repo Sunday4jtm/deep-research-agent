@@ -8,6 +8,7 @@ D3~D5 逐个替换为 LLM 版本，骨架版保留为离线测试的基准线。
 """
 from __future__ import annotations
 
+import re
 from dataclasses import replace
 
 from app.config import get_settings
@@ -97,9 +98,14 @@ def make_retrieve_node(sink: EventSink):
         k = max(1, settings.breadth)
         errors: list[str] = list(state.get("errors", []))
         for subq in state.get("sub_questions", []):
-            if subq in attempted:  # 跨轮去重：查过的不再查
-                continue
-            attempted.append(subq)
+            if subq in attempted:
+                # 跨轮去重：查过【且有证据】的不再重复花钱；零证据的 gap 例外——
+                # 上一轮很可能是瞬时失败（限流/熔断/超时），回环的价值正在于重试。
+                # dedup 防的是"重复成功的花费"，不是"失败不许再试"（D8 前回环空转）
+                if subq_evidence.get(subq):
+                    continue
+            else:
+                attempted.append(subq)
             eids = subq_evidence.get(subq, [])
             # 分源容错（PLAN §3.4）：单源失败只记 warning + errors，
             # 不拖垮整轮——kb 未接入（D6 前）也不影响 web 取证
@@ -177,16 +183,83 @@ def make_retrieve_node(sink: EventSink):
     return retrieve
 
 
+_CLAIM_RE = re.compile(r"([\u4e00-\u9fffA-Za-z]{2,8})[\s:：]*(\d+(?:\.\d+)?%?)")
+
+
+def _claims(text: str) -> dict[str, set[str]]:
+    """抽"指标上下文 → 数值集合"：冲突比较的是同名指标的取值，
+    不是裸数字——"BM25" 里的 25、"GPT-4" 里的 4 这类模型名数字
+    必须挂在字母上下文下，才不会被当成两边的"口径"互相污染。"""
+    claims: dict[str, set[str]] = {}
+    for ctx, num in _CLAIM_RE.findall(text):
+        claims.setdefault(ctx, set()).add(num)
+    return claims
+
+
+def _find_conflict(kb_text: str, web_text: str) -> tuple[str, str, str] | None:
+    """返回 (指标名, kb 值, web 值)：同名指标在两源取值不同即冲突。"""
+    kb = _claims(kb_text)
+    web = _claims(web_text)
+    for ctx, kb_vals in kb.items():
+        if ctx in web and web[ctx] != kb_vals:
+            return ctx, sorted(kb_vals)[0], sorted(web[ctx])[0]
+    return None
+
+
 def make_verify_node(sink: EventSink):
-    """验证节点：找出零证据子问题作为 gaps；冲突检测 D8 实现。"""
+    """验证节点：gaps（零证据子问题 → 追问回环）+ 跨源指标分歧标记。
+
+    冲突检测是【启发式】而不是语义裁决（如实定位）：同一子问题下 kb 与
+    公网证据出现"同名指标、不同数值"（如两边都说"准确率"但一个 90% 一
+    个 95%）时才标记——多半是统计口径/时间点不同，报告需要向读者披露
+    而不是默默采信一边。与注入扫描同哲学：只报告不拦截（PLAN §7.1）。
+    D10 的 gold conflict 夹具会检验这个启发式的召回。
+    """
 
     def verify(state):
         sink.emit(AgentEvent(EVENT_NODE_STARTED, {"node": "verifier"}))
-        gaps = [q for q, eids in state.get("subq_evidence", {}).items() if not eids]
+        subq_evidence = state.get("subq_evidence", {})
+        evidence = state.get("evidence", [])
+        by_eid = {ev.eid: ev for ev in evidence}
+        gaps = [q for q, eids in subq_evidence.items() if not eids]
+
+        conflicts: list[dict[str, str]] = []
+        for subq, eids in subq_evidence.items():
+            hits = [by_eid[eid] for eid in eids if eid in by_eid]
+            kb_hits = [ev for ev in hits if ev.source_type == "kb"]
+            web_hits = [ev for ev in hits if ev.source_type == "web"]
+            if not kb_hits or not web_hits:
+                continue  # 单源无对照，谈不上"跨源分歧"
+            # 跨源合并指标口径后两两比对（一个子问题一条冲突，避免刷屏）
+            kb_text = " ".join(ev.snippet for ev in kb_hits)
+            web_text = " ".join(ev.snippet for ev in web_hits)
+            found = _find_conflict(kb_text, web_text)
+            if found is None:
+                continue
+            metric, kb_val, web_val = found
+            conflicts.append(
+                {"query": subq, "metric": metric, "kb": kb_val, "web": web_val}
+            )
+            sink.emit(
+                AgentEvent(
+                    EVENT_WARNING,
+                    {
+                        "where": "cross-source",
+                        "query": subq[:60],
+                        "metric": metric,
+                        "kb": kb_val,
+                        "web": web_val,
+                    },
+                )
+            )
+
         sink.emit(
-            AgentEvent(EVENT_NODE_FINISHED, {"node": "verifier", "gaps": len(gaps)})
+            AgentEvent(
+                EVENT_NODE_FINISHED,
+                {"node": "verifier", "gaps": len(gaps), "conflicts": len(conflicts)},
+            )
         )
-        return {"gaps": gaps}
+        return {"gaps": gaps, "conflicts": conflicts}
 
     return verify
 

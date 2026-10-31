@@ -9,6 +9,7 @@ from langgraph.graph import END, StateGraph
 
 from app.config import get_settings
 from app.contracts import (
+    EVENT_ERROR,
     EVENT_RESEARCH_STARTED,
     AgentEvent,
     EventSink,
@@ -49,9 +50,26 @@ def build_research_app(sink: EventSink):
 
 
 def run_research(question: str, focus: str = "", sink: EventSink | None = None) -> dict:
-    """同步入口：一次研究 = 一个完整的图执行。返回最终 State。"""
+    """同步入口：一次研究 = 一个完整的图执行。返回最终 State。
+
+    图执行任何异常都必须先以 error 事件收尾再向上抛：调用方跑在后台线程里
+    （Streamlit / D8 SSE），线程外拿不到 traceback——没有 error 事件的话，
+    UI 只会看到线程悄悄死亡、界面停在"研究中"假死（评审 P0-3）。这正
+    是契约里 error{code,msg} 的存在意义：失败也是事件流的一部分。
+    """
     active_sink = sink if sink is not None else ListSink()
     active_sink.emit(AgentEvent(EVENT_RESEARCH_STARTED, {"question": question}))
-    app = build_research_app(active_sink)
-    final = app.invoke({"question": question, "focus": focus}, config={"recursion_limit": 50})
+    try:
+        app = build_research_app(active_sink)
+        final = app.invoke(
+            {"question": question, "focus": focus}, config={"recursion_limit": 50}
+        )
+    except Exception as exc:
+        active_sink.emit(
+            AgentEvent(
+                EVENT_ERROR,
+                {"code": "graph_failed", "msg": f"{type(exc).__name__}: {exc}"[:200]},
+            )
+        )
+        raise
     return dict(final)

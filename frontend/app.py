@@ -4,11 +4,20 @@
 同步跑长任务会把页面锁死——老项目踩过的坑，这里复用"后台任务 + 轮询"
 模式，只是数据源从 HTTP 轮询换成了进程内事件队列（QueueSink）。
 
-启动（项目根目录）：
+D8 起有两种数据源（UI_MODE 开关，PLAN §3.1 三端共用契约）：
+  - gateway（默认）：读 FastAPI SSE 网关，UI 是纯 HTTP 客户端——
+    与 Next.js 消费同一条流，这是"三端共用契约"叙事的主路径；
+  - inline：进程内直调 run_research（D5 原模式，SSE 卡壳时的砍线兜底）。
+两种模式喂给 UI 的都是同一个 QueueSink，live_panel 一行不用改。
+
+启动（项目根目录，gateway 模式先起网关）：
+    /opt/anaconda3/envs/agent-research/bin/uvicorn api.main:app --port 8000
     /opt/anaconda3/envs/agent-research/bin/streamlit run frontend/app.py
 """
 from __future__ import annotations
 
+import json
+import os
 import queue
 import sys
 import threading
@@ -16,14 +25,19 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # streamlit 只加脚本目录进 sys.path
 
+import requests  # noqa: E402
 import streamlit as st  # noqa: E402
 
 from app.contracts import (  # noqa: E402
     EVENT_DONE,
+    EVENT_ERROR,
     EVENT_REPORT_DELTA,
     AgentEvent,
 )
 from app.graph.build import run_research  # noqa: E402
+
+UI_MODE = os.getenv("UI_MODE", "gateway")  # gateway | inline
+GATEWAY_URL = os.getenv("GATEWAY_URL", "http://127.0.0.1:8000").rstrip("/")
 
 st.set_page_config(page_title="研知 · Deep Research Agent", page_icon="🔬", layout="wide")
 
@@ -38,11 +52,50 @@ class QueueSink:
         self.q.put(event)
 
 
+def _consume_gateway(question: str, focus: str, sink: QueueSink) -> None:
+    """SSE 客户端：把网关下发的契约事件逐帧转回 AgentEvent 推进队列。
+
+    为什么逐行解析而不是引 SSE 库：协议就一行一个 `data: {json}`，
+    三十行代码换零依赖，冲刺期划算。任何传输层异常都转成 EVENT_ERROR
+    入队——UI 的终止逻辑只认事件，不感知传输细节（与 inline 模式对称）。
+    """
+    try:
+        resp = requests.post(
+            f"{GATEWAY_URL}/api/research",
+            json={"question": question, "focus": focus},
+            stream=True,
+            timeout=(3, None),  # 读超时必须放开：研究是分钟级长流
+        )
+        resp.raise_for_status()
+        for line in resp.iter_lines(decode_unicode=True):
+            if not line.startswith("data: "):
+                continue
+            data = json.loads(line[len("data: ") :])
+            sink.emit(
+                AgentEvent(
+                    type=data["type"], payload=data.get("payload", {}), ts=data.get("ts", 0.0)
+                )
+            )
+    except requests.RequestException as exc:
+        sink.emit(
+            AgentEvent(
+                EVENT_ERROR,
+                {
+                    "code": "gateway_unreachable",
+                    "msg": f"网关不可达（{type(exc).__name__}）：先启动 "
+                    f"uvicorn api.main:app（GATEWAY_URL={GATEWAY_URL}），"
+                    "或把 UI_MODE 改为 inline 直调进程内图",
+                },
+            )
+        )
+
+
 for key, default in {
     "thread": None,
     "sink": None,
     "report_text": "",
     "done": False,
+    "error": None,
     "events": [],
     "citation": None,
 }.items():
@@ -62,12 +115,15 @@ if st.button("开始研究", type="primary", disabled=running or not question.st
     st.session_state.sink = QueueSink()
     st.session_state.report_text = ""
     st.session_state.done = False
+    st.session_state.error = None
     st.session_state.events = []
     st.session_state.citation = None
+    # UI_MODE 决定数据源：gateway=SSE 客户端（主路径），inline=进程内直调（砍线兜底）。
+    # 两个 target 的签名刻意对齐（question, focus, sink），切换零胶水
+    target = _consume_gateway if UI_MODE == "gateway" else run_research
     st.session_state.thread = threading.Thread(
-        target=run_research,
-        args=(question.strip(), focus.strip()),
-        kwargs={"sink": st.session_state.sink},
+        target=target,
+        args=(question.strip(), focus.strip(), st.session_state.sink),
         daemon=True,
     )
     st.session_state.thread.start()
@@ -94,11 +150,18 @@ def live_panel() -> None:
         elif event.type == EVENT_DONE:
             st.session_state.done = True
             st.session_state.citation = event.payload.get("citation_report")
+        elif event.type == EVENT_ERROR:
+            # 后台线程崩掉时这是唯一能到达 UI 的失败信号（评审 P0-3）；
+            # 同时进 events 列表，让过程面板里也能看到错误现场
+            st.session_state.error = str(event.payload.get("msg", "未知错误"))
+            st.session_state.events.append(event)
         else:
             st.session_state.events.append(event)
 
     alive = st.session_state.thread is not None and st.session_state.thread.is_alive()
-    if st.session_state.done:
+    if st.session_state.error:
+        status_ph.error(f"❌ 研究失败：{st.session_state.error}")
+    elif st.session_state.done:
         status_ph.success("✅ 研究完成")
     elif alive:
         status_ph.info(

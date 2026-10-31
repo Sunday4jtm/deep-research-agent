@@ -5,6 +5,8 @@ import pytest
 
 from app.contracts import (
     EVENT_DONE,
+    EVENT_ERROR,
+    EVENT_RESEARCH_STARTED,
     EVENT_WARNING,
     ListSink,
 )
@@ -76,3 +78,39 @@ def test_total_failure_still_completes_with_disclosure(
     assert final["round"] == get_settings().max_rounds
     assert len(final["errors"]) >= 2, "web 与 kb 的失败都要记录"
     assert "未覆盖" in final["report"], "报告必须诚实披露"
+
+
+# ============================================================
+# 图执行崩溃的失败语义（评审 P0-3）：error 事件是后台线程里 UI
+# 唯一能收到的失败信号，没有它界面就会"线程悄悄死亡、停在研究中"
+# ============================================================
+def test_节点内异常以error事件收尾并向上抛(monkeypatch: pytest.MonkeyPatch) -> None:
+    """节点炸掉不能只靠 raise：事件流必须以 error 收尾，供 UI 判定终态。"""
+
+    def _boom():
+        raise ValueError("未知 PROVIDER_MODE：typo（可选 fake | direct | mcp）")
+
+    monkeypatch.setattr("app.graph.nodes.get_provider", _boom)
+    sink = ListSink()
+    with pytest.raises(ValueError):
+        run_research("任意问题", sink=sink)
+
+    types = [e.type for e in sink.events]
+    assert types[0] == EVENT_RESEARCH_STARTED
+    assert types[-1] == EVENT_ERROR, "崩溃必须以 error 事件收尾，不能无声终止"
+    assert "PROVIDER_MODE" in sink.events[-1].payload["msg"]
+
+
+def test_装配阶段异常同样发error事件(monkeypatch: pytest.MonkeyPatch) -> None:
+    """build_research_app 本身炸（如图装配/import 问题）也在 error 语义覆盖内。"""
+
+    def _boom(_sink):
+        raise RuntimeError("装配爆炸")
+
+    monkeypatch.setattr("app.graph.build.build_research_app", _boom)
+    sink = ListSink()
+    with pytest.raises(RuntimeError):
+        run_research("任意问题", sink=sink)
+
+    assert [e.type for e in sink.events] == [EVENT_RESEARCH_STARTED, EVENT_ERROR]
+    assert "装配爆炸" in sink.events[-1].payload["msg"]

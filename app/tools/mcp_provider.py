@@ -21,6 +21,7 @@ sync 方法经 run_coroutine_threadsafe 提交。若"每次调用 asyncio.run
 from __future__ import annotations
 
 import asyncio
+import atexit
 import contextlib
 import json
 import logging
@@ -71,6 +72,10 @@ class _McpSession:
                 self._teardown()
                 raise
             logger.info("MCP Server 已连接（stdio）：%s", self._command)
+            # 进程退出时显式收口（close 幂等；单例下整个进程只注册一次）。
+            # 不注册的话，daemon loop 线程死在解释器关闭的哪个阶段不可控，
+            # 子进程回收全靠 stdin EOF 兜底——多一道确定性的闸。
+            atexit.register(self.close)
 
     async def _start(self) -> None:
         from mcp import ClientSession, StdioServerParameters
@@ -103,14 +108,34 @@ class _McpSession:
         return env
 
     def _teardown(self) -> None:
-        """回滚半初始化状态：失败后下次调用能重新尝试，而不是卡死在坏会话上。"""
+        """回滚半初始化状态：失败后下次调用能重新尝试，而不是卡死在坏会话上。
+
+        为什么必须等 aclose 真正跑完再停 loop：fire-and-forget 提交后紧接着
+        stop loop，清理协程可能永远轮不到执行，子进程就泄漏了。等 5s 上限
+        是防 aclose 卡死拖住调用方——超时后子进程由 stdin EOF 兜底退出。
+        """
         if self._stack is not None and self._loop is not None:
-            asyncio.run_coroutine_threadsafe(self._stack.aclose(), self._loop)
+            fut = asyncio.run_coroutine_threadsafe(self._stack.aclose(), self._loop)
+            try:
+                fut.result(timeout=5)
+            except Exception:
+                logger.warning("MCP 会话清理未按时完成（子进程将由 stdin EOF 兜底退出）")
         self._stack = None
         self._session = None
         if self._loop is not None:
             self._loop.call_soon_threadsafe(self._loop.stop)
         self._loop = None
+
+    def close(self) -> None:
+        """显式收口：关会话与子进程、停后台 loop。幂等，atexit 与测试都能调。
+
+        工厂单例生命周期下这是 Streamlit 长驻进程里唯一的确定性回收出口——
+        进程活着时 daemon 线程永远不会自己死（评审 P0-1 泄漏的根因）。
+        """
+        with self._lock:
+            if self._loop is None:
+                return  # 未初始化或已关闭：无害 no-op
+            self._teardown()
 
     def call(self, name: str, arguments: dict) -> dict:
         """同步调用远端工具；工具约定都回 {"ok": ...} 结构（见 mcp_web_server.py）。"""
@@ -160,6 +185,14 @@ class MCPProvider:
         if self._kb is None:
             self._kb = _McpSession(shlex.split(get_settings().mcp_kb_command))
         return self._kb
+
+    def close(self) -> None:
+        """关停两个 MCP 会话与子进程（工具工厂单例的收尾出口；未连接时无害）。"""
+        for session in (self._web, self._kb):
+            if session is not None:
+                session.close()
+        self._web = None
+        self._kb = None
 
     # ---- web_search / web_fetch：MCP Server A（老仓库 web_research 的包装）----
     def web_search(self, query: str, k: int = 3) -> list[Evidence]:

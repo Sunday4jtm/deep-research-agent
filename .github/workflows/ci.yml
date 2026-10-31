@@ -29,7 +29,7 @@ jobs:
       - name: 离线测试
         run: pytest -m "not slow" -q
       - name: 密钥扫描
-        run: |
-          # CI 上没有 staged 概念，直接扫全部跟踪文件
-          bash scripts/check_secrets.sh || true
-          git ls-files | xargs grep -InE 'sk-[A-Za-z0-9]{16,}|[a-f0-9]{32,}' || echo "✓ 密钥扫描通过"
+        # 评审 P0-2 修复：旧写法 `|| true` 吞退出码、内联 grep 命中反而退出 0，
+        # 扫描永远绿灯；现在统一走 check_secrets.sh --all（pattern 单一来源，
+        # 且比旧内联版多扫智谱形态 id.secret），命中即非 0 退出、CI 真变红
+        run: bash scripts/check_secrets.sh --all

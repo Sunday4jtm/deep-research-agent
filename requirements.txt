@@ -16,3 +16,7 @@ pydantic==2.14.2
 pytest==9.2.0
 ruff==0.17.3
 pre-commit==4.7.0
+
+# --- D8 SSE 网关 ---
+fastapi==0.162.0
+uvicorn[standard]==0.54.0
