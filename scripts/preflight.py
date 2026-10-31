@@ -20,6 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 ZHIPU_BASE = "https://open.bigmodel.cn/api/paas/v4/"
 DEEPSEEK_BASE = "https://api.deepseek.com/v1"
+SENSENOVA_BASE = "https://api.sensenova.cn/compatible-mode/v1"
 # 工具接口不走 /v1 前缀，与老仓库 web_research.py 口径对齐
 DEEPSEEK_TOOLS_BASE = "https://api.deepseek.com"
 
@@ -108,7 +109,7 @@ def check_tools(env: dict[str, str]) -> bool:
 
 def main() -> int:
     env = load_env()
-    targets = sys.argv[1:] or ["zhipu", "deepseek"]
+    targets = sys.argv[1:] or ["zhipu", "deepseek", "sensenova"]
     all_ok = True
 
     if "zhipu" in targets:
@@ -118,6 +119,16 @@ def main() -> int:
             all_ok = False
         else:
             all_ok &= check_chat("zhipu chat (glm-4-flash)", key, ZHIPU_BASE, "glm-4-flash")
+
+    if "sensenova" in targets:
+        key = env.get("SENSENOVA_API_KEY", "")
+        if not key:
+            print("SKIP  sensenova chat           未配置 SENSENOVA_API_KEY")
+            all_ok = False
+        else:
+            base = env.get("SENSENOVA_BASE_URL", SENSENOVA_BASE)
+            model = env.get("SENSENOVA_MODEL", "SenseChat-5")
+            all_ok &= check_chat(f"sensenova chat ({model})", key, base, model)
 
     if "deepseek" in targets:
         key = env.get("DEEPSEEK_API_KEY", "")

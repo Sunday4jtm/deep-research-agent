@@ -22,11 +22,19 @@ _build_lock = threading.Lock()
 
 
 def _model_chain() -> list[tuple[str, str, str, str]]:
-    """按优先级返回 (provider, base_url, model, api_key) 列表。Key 缺失的跳过。"""
+    """按优先级返回 (provider, base_url, model, api_key) 列表。Key 缺失的跳过。
+
+    顺序即优先级：DeepSeek（主力）→ SenseNova（过渡期公测免费）→ 智谱（兜底）。
+    谁配了 Key 谁上岗，全部缺席才报错——不靠配置排列组合，靠 Key 存在性。
+    """
     s = get_settings()
     chain: list[tuple[str, str, str, str]] = []
     if s.deepseek_api_key:
         chain.append(("deepseek", DEEPSEEK_BASE_URL, s.model_main, s.deepseek_api_key))
+    if s.sensenova_api_key:
+        chain.append(
+            ("sensenova", s.sensenova_base_url, s.sensenova_model, s.sensenova_api_key)
+        )
     if s.zhipu_api_key:
         chain.append(("zhipu", ZHIPU_BASE_URL, s.model_fallback, s.zhipu_api_key))
     return chain

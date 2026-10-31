@@ -41,6 +41,21 @@ def test_config_offline_safe() -> None:
     assert s.max_rounds >= 1 and s.breadth >= 1
 
 
+def test_model_chain_order(monkeypatch: pytest.MonkeyPatch) -> None:
+    """三模型齐备时的优先级：DeepSeek 主力 → SenseNova 过渡 → 智谱兜底。"""
+    from app.llm import _model_chain
+
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "d")
+    monkeypatch.setenv("SENSENOVA_API_KEY", "s")
+    monkeypatch.setenv("ZHIPU_API_KEY", "z")
+    get_settings.cache_clear()
+    try:
+        names = [provider for provider, *_ in _model_chain()]
+        assert names == ["deepseek", "sensenova", "zhipu"]
+    finally:
+        get_settings.cache_clear()
+
+
 def test_llm_chain_empty_raises_before_network(monkeypatch: pytest.MonkeyPatch) -> None:
     """一个 Key 都没有时，必须在发请求之前就报人话错误。
 

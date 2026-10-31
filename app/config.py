@@ -25,6 +25,9 @@ class Settings:
     zhipu_api_key: str
     model_main: str          # 主力 chat 模型，P0 预检后定稿
     model_fallback: str      # 兜底 chat 模型（国产免费模型高峰限流是常态，见老项目结论）
+    sensenova_api_key: str   # 过渡期 LLM（公测免费，5h/1500次）；DeepSeek 到位后退二线
+    sensenova_base_url: str
+    sensenova_model: str     # 模型名以 platform.sensenova.cn 控制台为准
     provider_mode: str       # mcp | direct | fake（PLAN D-5：降级全做成开关）
     planner_mode: str        # llm | template（离线测试强制 template，见 conftest）
     zhipu_search_engine: str  # 智谱独立 web_search API 的引擎档位（search_std 起步）
@@ -45,6 +48,9 @@ def get_settings() -> Settings:
         zhipu_api_key=_env("ZHIPU_API_KEY"),
         model_main=_env("MODEL_MAIN", "deepseek-chat"),
         model_fallback=_env("MODEL_FALLBACK", "glm-4-flash"),
+        sensenova_api_key=_env("SENSENOVA_API_KEY"),
+        sensenova_base_url=_env("SENSENOVA_BASE_URL", "https://api.sensenova.cn/compatible-mode/v1"),
+        sensenova_model=_env("SENSENOVA_MODEL", "SenseChat-5"),
         provider_mode=_env("PROVIDER_MODE", "fake"),
         planner_mode=_env("PLANNER_MODE", "llm"),
         zhipu_search_engine=_env("ZHIPU_SEARCH_ENGINE", "search_std"),
