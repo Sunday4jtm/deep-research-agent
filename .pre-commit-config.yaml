@@ -20,6 +20,5 @@ repos:
         name: 离线冒烟测试
         entry: /opt/anaconda3/envs/agent-research/bin/pytest -m "not slow" -q
         language: system
-        pre-commit: true
         pass_filenames: false
         stages: [pre-commit]
