@@ -1,0 +1,18 @@
+# 研知 · Deep Research Agent —— 直接依赖钉版（2026-10-31 装机定版）
+# 安装（阿里云镜像；清华镜像当日对 langgraph 返回 403，实测阿里云可用）：
+#   pip install -r requirements.txt -i https://mirrors.aliyun.com/pypi/simple/
+# 全量传递依赖见 requirements-lock.txt（pip freeze 产物，CI/复现用）。
+
+langgraph==1.2.18
+langchain==1.4.7
+langchain-openai==1.7.3
+mcp==1.30.0
+langchain-mcp-adapters==0.3.2
+langfuse==5.0.4
+streamlit==1.66.1
+httpx==0.28.1
+python-dotenv==1.2.4
+pydantic==2.14.2
+pytest==9.2.0
+ruff==0.17.3
+pre-commit==4.7.0

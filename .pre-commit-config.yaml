@@ -1,0 +1,25 @@
+# 钩子命令钉绝对路径：git hook 运行时的 PATH 指向 conda base（3.13，无项目依赖），
+# 而项目依赖装在 agent-research（3.12）——不钉路径就会用错解释器（D1 实测踩坑）。
+# 若日后换环境名，这里必须同步修改。
+repos:
+  - repo: local
+    hooks:
+      - id: no-secrets
+        name: 密钥泄漏扫描
+        entry: bash scripts/check_secrets.sh
+        language: system
+        pass_filenames: false
+        always_run: true
+      - id: ruff-check
+        name: ruff 静态检查
+        entry: /opt/anaconda3/envs/agent-research/bin/ruff check .
+        language: system
+        pass_filenames: false
+        types: [python]
+      - id: offline-tests
+        name: 离线冒烟测试
+        entry: /opt/anaconda3/envs/agent-research/bin/pytest -m "not slow" -q
+        language: system
+        pre-commit: true
+        pass_filenames: false
+        stages: [pre-commit]
