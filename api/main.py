@@ -12,6 +12,13 @@
 终止纪律（契约红线）：done 必须是最后一个事件。研究线程崩溃时网关负责
 补一条 error 事件收尾——客户端永远能靠"收到 done/error"判断流结束，
 绝不静默断流。
+
+已知边界（对抗性审查登记，单用户演示场景下接受）：
+- 并发 run 无上限：多个 POST 各起一个研究线程，共享 provider 单例；
+  MCP ClientSession 按请求 id 复用可并发，但重负载下应加队列/限流；
+- 客户端中途断开：SSE 生成器收到 GeneratorExit 即停，研究线程作为
+  daemon 跑完自然退出（结果丢弃）——短演示无碍，长驻服务需要取消机制；
+- 每研究一次申请一个事件队列，随线程结束被 GC，无跨 run 状态。
 """
 from __future__ import annotations
 
@@ -22,7 +29,7 @@ import threading
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.contracts import (
     EVENT_DONE,
@@ -49,8 +56,10 @@ class _ThreadSafeSink:
 
 
 class ResearchRequest(BaseModel):
-    question: str
-    focus: str = ""
+    # 长度上限：question 直接进 LLM prompt，无上限的输入=无上限的 token 账单
+    # （对抗性审查补；超出即 422，客户端可见）
+    question: str = Field(max_length=2000)
+    focus: str = Field(default="", max_length=500)
 
 
 @app.get("/api/health")

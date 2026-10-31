@@ -173,18 +173,32 @@ class MCPProvider:
     def __init__(self) -> None:
         self._web: _McpSession | None = None
         self._kb: _McpSession | None = None
+        self._session_lock = threading.Lock()
         self._web_breaker = _Breaker("mcp-web")
         self._kb_breaker = _Breaker("mcp-kb")
 
     def _get_web(self) -> _McpSession:
-        if self._web is None:
-            self._web = _McpSession(shlex.split(get_settings().mcp_web_command))
-        return self._web
+        return self._get_session("web")
 
     def _get_kb(self) -> _McpSession:
-        if self._kb is None:
-            self._kb = _McpSession(shlex.split(get_settings().mcp_kb_command))
-        return self._kb
+        return self._get_session("kb")
+
+    def _get_session(self, which: str) -> _McpSession:
+        """懒构建对应 Server 的会话，必须加锁：D9 检索并行化后多个线程
+        同时首调，无锁 check-then-act 会让输家线程也各自 new 一个会话并
+        在 call 时拉起自己的子进程——孤儿 Server 进程（对抗性审查发现）。"""
+        with self._session_lock:
+            attr = "_web" if which == "web" else "_kb"
+            session = getattr(self, attr)
+            if session is None:
+                command = (
+                    get_settings().mcp_web_command
+                    if which == "web"
+                    else get_settings().mcp_kb_command
+                )
+                session = _McpSession(shlex.split(command))
+                setattr(self, attr, session)
+            return session
 
     def close(self) -> None:
         """关停两个 MCP 会话与子进程（工具工厂单例的收尾出口；未连接时无害）。"""

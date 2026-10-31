@@ -46,6 +46,7 @@ app/graph/nodes.py   图节点工厂（planner/retriever/verifier/synthesizer）
 app/graph/build.py   StateGraph 装配 + run_research 入口
 api/main.py          FastAPI SSE 网关（事件契约出网边界，D8）
 frontend/app.py      Streamlit 界面（SSE 客户端/inline 直调双模式，UI_MODE 切换）
+eval/                D10 评测：题集/夹具/指标/裁判/runner（结果落 eval/results/，已 gitignore）
 scripts/preflight.py Provider 真实预检（P0）
 scripts/spike_*      P0 两个 hello-world spike（MCP/Langfuse）
 tests/               全离线测试（conftest 带断网守卫）
