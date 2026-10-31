@@ -34,9 +34,28 @@ def make_plan_node(sink: EventSink):
 
     def plan(state):
         sink.emit(AgentEvent(EVENT_NODE_STARTED, {"node": "planner"}))
-        sub_questions = [state["question"].strip()]
+        settings = get_settings()
+        if settings.planner_mode == "llm":
+            # 延迟 import：template 模式（离线测试）不应该碰 LLM 模块
+            from app.planner import plan_subquestions
+
+            sub_questions, usage = plan_subquestions(
+                state["question"], state.get("focus", "")
+            )
+        else:
+            from app.planner import template_plan
+
+            sub_questions = template_plan(state["question"])
+            usage = {"planner": 0}
         sink.emit(
-            AgentEvent(EVENT_NODE_FINISHED, {"node": "planner", "subq": len(sub_questions)})
+            AgentEvent(
+                EVENT_NODE_FINISHED,
+                {
+                    "node": "planner",
+                    "subq": len(sub_questions),
+                    "mode": settings.planner_mode,
+                },
+            )
         )
         # 初始化字段：让后续节点永远面对"完整状态"，不处理缺键
         return {
@@ -50,7 +69,7 @@ def make_plan_node(sink: EventSink):
             "conflicts": [],
             "gaps": [],
             "round": 0,
-            "token_usage": {},
+            "token_usage": usage,
             "errors": [],
         }
 

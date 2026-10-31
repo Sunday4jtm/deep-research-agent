@@ -8,5 +8,7 @@ from __future__ import annotations
 import os
 
 os.environ["PROVIDER_MODE"] = "fake"
+# planner 同理：测试永远走确定性模板，LLM 版规划器由 slow 测试单独实调验证
+os.environ["PLANNER_MODE"] = "template"
 # 防止本机 .env 里真实 Key 让某个测试"意外走通网络"（宁可测试失败也不静默联网）
 os.environ.setdefault("PYTEST_OFFLINE", "1")
