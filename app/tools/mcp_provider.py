@@ -1,4 +1,4 @@
-"""MCPProvider：经 MCP stdio 连老仓库 mcp/ 下的 Server（D6 = Server A/web；B/kb 在 D7）。
+"""MCPProvider：经 MCP stdio 连老仓库 mcp/ 下的两个 Server（A=web，B=kb）。
 
 为什么用 mcp SDK 原生 ClientSession 而不是 langchain-mcp-adapters：
 spike①（P0）已用 adapters 验证过生态兼容性，但产品路径要的是
@@ -24,6 +24,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import os
 import shlex
 import threading
 
@@ -76,10 +77,30 @@ class _McpSession:
         from mcp.client.stdio import stdio_client
 
         self._stack = contextlib.AsyncExitStack()
-        params = StdioServerParameters(command=self._command[0], args=self._command[1:])
+        params = StdioServerParameters(
+            command=self._command[0], args=self._command[1:], env=self._server_env()
+        )
         read, write = await self._stack.enter_async_context(stdio_client(params))
         self._session = await self._stack.enter_async_context(ClientSession(read, write))
         await self._session.initialize()
+
+    # 转发给 Server 子进程的环境变量白名单。为什么必须显式：mcp SDK 默认只给
+    # 子进程一份最小环境（get_default_environment：PATH/HOME 等），父进程的
+    # 其他变量一概不传——D7 实测 KB_CHROMA_DIR 就这样被静默丢掉，Server B
+    # 回退默认目录检索了真私有库。密钥（DEEPSEEK_API_KEY 等）刻意不在白名单：
+    # Server 的上游 Key 由它自己从老仓库 .env 读取（load_dotenv），不随进程传播。
+    ENV_PASSTHROUGH = ("KB_CHROMA_DIR",)
+
+    @staticmethod
+    def _server_env() -> dict:
+        from mcp.client.stdio import get_default_environment
+
+        env = dict(get_default_environment())
+        for key in _McpSession.ENV_PASSTHROUGH:
+            value = os.environ.get(key)
+            if value:
+                env[key] = value
+        return env
 
     def _teardown(self) -> None:
         """回滚半初始化状态：失败后下次调用能重新尝试，而不是卡死在坏会话上。"""
@@ -117,32 +138,44 @@ class _McpSession:
 
 
 class MCPProvider:
-    """PROVIDER_MODE=mcp 时由 get_provider() 返回。"""
+    """PROVIDER_MODE=mcp 时由 get_provider() 返回。
+
+    D7 起挂两个 Server：A=web（老仓库 web_research）、B=kb（老仓库
+    search_hybrid）。两个会话/两个熔断器完全独立——公网挂了不影响
+    私有源取证，反之亦然（PLAN §3.4 分源容错在 provider 层的对应物）。
+    """
 
     def __init__(self) -> None:
-        self._session: _McpSession | None = None
-        self._breaker = _Breaker("mcp-web")
+        self._web: _McpSession | None = None
+        self._kb: _McpSession | None = None
+        self._web_breaker = _Breaker("mcp-web")
+        self._kb_breaker = _Breaker("mcp-kb")
 
-    def _get_session(self) -> _McpSession:
-        if self._session is None:
-            self._session = _McpSession(shlex.split(get_settings().mcp_web_command))
-        return self._session
+    def _get_web(self) -> _McpSession:
+        if self._web is None:
+            self._web = _McpSession(shlex.split(get_settings().mcp_web_command))
+        return self._web
+
+    def _get_kb(self) -> _McpSession:
+        if self._kb is None:
+            self._kb = _McpSession(shlex.split(get_settings().mcp_kb_command))
+        return self._kb
 
     # ---- web_search / web_fetch：MCP Server A（老仓库 web_research 的包装）----
     def web_search(self, query: str, k: int = 3) -> list[Evidence]:
-        if self._breaker.open:
-            raise CircuitOpen(f"mcp-web 熔断中（连续失败 {self._breaker.fails} 次）")
+        if self._web_breaker.open:
+            raise CircuitOpen(f"mcp-web 熔断中（连续失败 {self._web_breaker.fails} 次）")
         try:
-            payload = self._get_session().call("web_search", {"query": query, "count": k})
+            payload = self._get_web().call("web_search", {"query": query, "count": k})
             if not payload.get("ok"):
                 # unsupported（老仓库没配 DeepSeek Key）与真故障都让
                 # retriever 记 errors——文案区分开，排障时不用猜
                 raise WebSearchError(f"MCP web_search 失败：{payload.get('error', '')}")
             out = self._to_evidence(payload.get("results") or [], k)
-            self._breaker.record(True)
+            self._web_breaker.record(True)
             return out
         except Exception:
-            self._breaker.record(False)
+            self._web_breaker.record(False)
             raise
 
     @staticmethod
@@ -168,24 +201,75 @@ class MCPProvider:
         return out
 
     def web_fetch(self, url: str) -> str:
-        if self._breaker.open:
+        if self._web_breaker.open:
             raise CircuitOpen("mcp-web 熔断中")
         try:
-            payload = self._get_session().call("web_fetch", {"url": url})
+            payload = self._get_web().call("web_fetch", {"url": url})
             if not payload.get("ok"):
                 raise WebSearchError(f"MCP web_fetch 失败：{payload.get('error', '')}")
             content = sanitize_web_text(str(payload.get("content") or ""))
             if not content:
                 raise WebSearchError("抓取结果没有正文")
-            self._breaker.record(True)
+            self._web_breaker.record(True)
             return content
         except Exception:
-            self._breaker.record(False)
+            self._web_breaker.record(False)
             raise
 
-    # ---- kb：MCP Server B 在 D7（老仓库 mcp_kb_server.py，包 search_hybrid）----
+    # ---- kb_search / kb_status：MCP Server B（老仓库 search_hybrid 的包装，D7）----
     def kb_search(self, query: str, k: int = 3) -> list[Evidence]:
-        raise NotImplementedError("D7 实现：MCP Server B（老仓库 kb 混合检索）")
+        if self._kb_breaker.open:
+            raise CircuitOpen(f"mcp-kb 熔断中（连续失败 {self._kb_breaker.fails} 次）")
+        try:
+            payload = self._get_kb().call("kb_search", {"query": query, "k": k})
+            if not payload.get("ok"):
+                raise WebSearchError(f"MCP kb_search 失败：{payload.get('error', '')}")
+            out = self._kb_to_evidence(payload.get("results") or [], k)
+            self._kb_breaker.record(True)
+            return out
+        except Exception:
+            self._kb_breaker.record(False)
+            raise
+
+    @staticmethod
+    def _kb_to_evidence(items: list, k: int) -> list[Evidence]:
+        """与 DirectProvider.kb 同口径；locator 带 chunk 号（见下）。"""
+        out: list[Evidence] = []
+        for item in items[:k]:
+            if not isinstance(item, dict):
+                continue
+            text = str(item.get("text") or "")
+            source = str(item.get("source") or "")
+            if not text or not source:
+                continue  # 无正文/无来源的块没法当证据引用，跳过
+            # locator 带 chunk 号：同一文件的第 3 块和第 7 块是两份独立证据，
+            # 若用纯 source 名做 locator，retriever 的跨子问题去重会把它们
+            # 当成重复证据丢掉（web 侧 URL 天然唯一，kb 侧必须自己造唯一键）
+            chunk = item.get("chunk_index")
+            locator = source if chunk is None else f"{source}#chunk{chunk}"
+            out.append(
+                Evidence(
+                    eid="",
+                    source_type="kb",
+                    title=source[:120],
+                    locator=locator,
+                    snippet=sanitize_web_text(text),
+                )
+            )
+        return out
 
     def kb_status(self) -> dict:
-        raise NotImplementedError("D7 实现：MCP Server B")
+        if self._kb_breaker.open:
+            raise CircuitOpen("mcp-kb 熔断中")
+        try:
+            payload = self._get_kb().call("kb_status", {})
+            if not payload.get("ok"):
+                raise WebSearchError(f"MCP kb_status 失败：{payload.get('error', '')}")
+            self._kb_breaker.record(True)
+            return {
+                "total_chunks": payload.get("total_chunks"),
+                "sources": payload.get("sources") or [],
+            }
+        except Exception:
+            self._kb_breaker.record(False)
+            raise

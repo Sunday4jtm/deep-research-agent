@@ -55,8 +55,18 @@ def test_命令按shlex解析进会话(mcp_mode, monkeypatch):
     monkeypatch.setenv("MCP_WEB_CMD", '/opt/envs/ai_study/bin/python "/tmp/a b/server.py"')
     provider = MCPProvider()
     # 触发懒构建并检查解析结果（不会真的拉子进程——_ensure 只在 call 时执行）
-    command = provider._get_session()._command
+    command = provider._get_web()._command
     assert command == ["/opt/envs/ai_study/bin/python", "/tmp/a b/server.py"]
+
+
+def test_kb命令同样按shlex解析(mcp_mode, monkeypatch):
+    monkeypatch.setenv("MCP_KB_CMD", "/opt/envs/ai_study/bin/python /path/kb_server.py")
+    provider = MCPProvider()
+
+    assert provider._get_kb()._command == [
+        "/opt/envs/ai_study/bin/python",
+        "/path/kb_server.py",
+    ]
 
 
 def test_未配置MCP_WEB_CMD时报错指路(mcp_mode, monkeypatch):
@@ -65,7 +75,7 @@ def test_未配置MCP_WEB_CMD时报错指路(mcp_mode, monkeypatch):
     provider = MCPProvider()
 
     with pytest.raises(WebSearchError) as excinfo:
-        provider._get_session().call("web_search", {"query": "x"})
+        provider._get_web().call("web_search", {"query": "x"})
 
     assert "MCP_WEB_CMD" in str(excinfo.value)
 
@@ -76,10 +86,9 @@ def test_未配置MCP_WEB_CMD时报错指路(mcp_mode, monkeypatch):
 def _provider_with_stub(monkeypatch: pytest.MonkeyPatch, payloads: dict) -> MCPProvider:
     provider = MCPProvider()
     stub = _StubSession(payloads)
-    monkeypatch.setattr(provider, "_session", stub)
-    monkeypatch.setattr(
-        MCPProvider, "_get_session", lambda self: stub
-    )
+    # web/kb 两个入口都指向同一个桩：按 payloads 里配了什么工具就表现成什么
+    monkeypatch.setattr(MCPProvider, "_get_web", lambda self: stub)
+    monkeypatch.setattr(MCPProvider, "_get_kb", lambda self: stub)
     return provider
 
 
@@ -163,15 +172,91 @@ def test_空正文与工具失败都报错(monkeypatch):
 
 
 # ============================================================
-# 4. kb 侧：D7 前显式不可用
+# 4. kb 侧：MCP Server B（D7）
 # ============================================================
-def test_kb_search保持显式NotImplementedError():
-    """kb 走 MCP Server B（D7）；提前半实现会制造"能跑但没数据"的假象。"""
-    provider = MCPProvider()
-    with pytest.raises(NotImplementedError):
+def test_kb回包映射成Evidence且locator带chunk号(monkeypatch):
+    """同一文件的两个块 = 两份证据：locator 必须带 chunk 号，
+    否则 retriever 跨子问题去重会把同文件多块误当重复吞掉。"""
+    provider = _provider_with_stub(
+        monkeypatch,
+        {
+            "kb_search": {
+                "ok": True,
+                "results": [
+                    {"text": "第0块", "source": "笔记A.md", "chunk_index": 0},
+                    {"text": "第3块", "source": "笔记A.md", "chunk_index": 3},
+                    {"text": "", "source": "空块.md", "chunk_index": 0},  # 无正文跳过
+                    {"text": "旧块", "source": "旧文档.md"},  # 缺 chunk_index 兼容
+                ],
+            }
+        },
+    )
+
+    hits = provider.kb_search("查询词", k=5)
+
+    assert len(hits) == 3
+    assert hits[0].source_type == "kb"
+    assert hits[0].locator == "笔记A.md#chunk0"
+    assert hits[1].locator == "笔记A.md#chunk3"
+    assert hits[2].locator == "旧文档.md"
+    assert hits[0].title == "笔记A.md"
+
+
+def test_kb失败转WebSearchError(monkeypatch):
+    provider = _provider_with_stub(
+        monkeypatch,
+        {"kb_search": {"ok": False, "error": "kb_search 失败（详见 Server B stderr 日志）"}},
+    )
+
+    with pytest.raises(WebSearchError):
         provider.kb_search("q", k=3)
-    with pytest.raises(NotImplementedError):
-        provider.kb_status()
+
+
+def test_kb与web熔断互相独立(monkeypatch):
+    """公网挂 3 次熔断后，私有源取证必须照常——分源容错的 provider 层保证。"""
+    provider = _provider_with_stub(
+        monkeypatch,
+        {
+            "web_search": {"ok": False, "unsupported": False, "error": "挂了", "results": []},
+            "kb_search": {
+                "ok": True,
+                "results": [{"text": "片段", "source": "笔记.md", "chunk_index": 0}],
+            },
+        },
+    )
+    for _ in range(3):
+        with pytest.raises(WebSearchError):
+            provider.web_search("q", k=3)
+
+    with pytest.raises(CircuitOpen):  # web 已熔断
+        provider.web_search("q", k=3)
+
+    hits = provider.kb_search("q", k=3)  # kb 完全不受影响
+    assert hits[0].locator == "笔记.md#chunk0"
+
+
+def test_kb_status映射(monkeypatch):
+    provider = _provider_with_stub(
+        monkeypatch,
+        {"kb_status": {"ok": True, "total_chunks": 18, "sources": ["笔记A.md"]}},
+    )
+
+    assert provider.kb_status() == {"total_chunks": 18, "sources": ["笔记A.md"]}
+
+
+# ============================================================
+# 6. 子进程环境白名单（D7 实测：SDK 默认最小环境会静默丢掉 KB_CHROMA_DIR）
+# ============================================================
+def test_环境白名单只转发约定变量(monkeypatch):
+    from app.tools.mcp_provider import _McpSession
+
+    monkeypatch.setenv("KB_CHROMA_DIR", "/tmp/chroma_demo")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-不应传播")
+
+    env = _McpSession._server_env()
+
+    assert env["KB_CHROMA_DIR"] == "/tmp/chroma_demo"  # 约定开关必须到达子进程
+    assert "DEEPSEEK_API_KEY" not in env  # 密钥不随进程传播（Server 自己读老仓库 .env）
 
 
 # ============================================================

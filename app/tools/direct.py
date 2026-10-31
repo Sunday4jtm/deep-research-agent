@@ -275,12 +275,16 @@ class DirectProvider:
                 source = str(item.get("source") or "")
                 if not text or not source:
                     continue  # 无正文/无来源的块没法当证据引用，跳过
+                # locator 带 chunk 号（与 MCPProvider.kb 同口径）：同一文件的
+                # 两个块是两份证据，纯 source 名会让跨子问题去重误吞
+                chunk = item.get("chunk_index")
+                locator = source if chunk is None else f"{source}#chunk{chunk}"
                 out.append(
                     Evidence(
                         eid="",
                         source_type="kb",
                         title=source[:120],
-                        locator=source,  # kb 证据的 locator = 来源名（PLAN §3.2）
+                        locator=locator,
                         snippet=sanitize_web_text(text),
                     )
                 )

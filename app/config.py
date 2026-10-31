@@ -34,6 +34,7 @@ class Settings:
     zhipu_search_engine: str  # 智谱独立 web_search API 的引擎档位（search_std 起步）
     web_provider: str        # deepseek | zhipu | tavily | none
     mcp_web_command: str     # MCP Server A 启动命令（stdio，空 = mcp 模式不可用）
+    mcp_kb_command: str      # MCP Server B 启动命令（D7；空 = mcp 模式 kb 侧不可用）
     kb_api_base: str         # 老仓库后端地址（DirectProvider.kb 兜底走 HTTP）
     kb_api_token: str        # 老仓库 X-API-Token（须与老仓库 .env 的 APP_AUTH_TOKEN 一致）
     max_rounds: int          # 检索回环熔断（depth）
@@ -61,6 +62,7 @@ def get_settings() -> Settings:
         zhipu_search_engine=_env("ZHIPU_SEARCH_ENGINE", "search_std"),
         web_provider=_env("WEB_PROVIDER", "deepseek"),
         mcp_web_command=_env("MCP_WEB_CMD"),
+        mcp_kb_command=_env("MCP_KB_CMD"),
         kb_api_base=_env("KB_API_BASE", "http://127.0.0.1:8000"),
         kb_api_token=_env("KB_API_TOKEN"),
         max_rounds=int(_env("MAX_ROUNDS", "3")),

@@ -202,7 +202,7 @@ def test_kb_search映射为kb证据(monkeypatch: pytest.MonkeyPatch) -> None:
 
     assert len(hits) == 1
     assert hits[0].source_type == "kb"
-    assert hits[0].locator == "笔记A.md"
+    assert hits[0].locator == "笔记A.md#chunk0"
     assert hits[0].title == "笔记A.md"
     assert seen["url"] == "http://127.0.0.1:8000/api/kb/search"
     assert seen["params"]["q"] == "什么是 RAG"
