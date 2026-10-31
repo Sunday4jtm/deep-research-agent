@@ -27,6 +27,7 @@ class Settings:
     model_fallback: str      # 兜底 chat 模型（国产免费模型高峰限流是常态，见老项目结论）
     provider_mode: str       # mcp | direct | fake（PLAN D-5：降级全做成开关）
     planner_mode: str        # llm | template（离线测试强制 template，见 conftest）
+    zhipu_search_engine: str  # 智谱独立 web_search API 的引擎档位（search_std 起步）
     web_provider: str        # deepseek | zhipu | tavily | none
     max_rounds: int          # 检索回环熔断（depth）
     breadth: int             # 每轮子问题检索上限（借鉴 dzhng/deep-research）
@@ -46,6 +47,7 @@ def get_settings() -> Settings:
         model_fallback=_env("MODEL_FALLBACK", "glm-4-flash"),
         provider_mode=_env("PROVIDER_MODE", "fake"),
         planner_mode=_env("PLANNER_MODE", "llm"),
+        zhipu_search_engine=_env("ZHIPU_SEARCH_ENGINE", "search_std"),
         web_provider=_env("WEB_PROVIDER", "deepseek"),
         max_rounds=int(_env("MAX_ROUNDS", "3")),
         breadth=int(_env("BREADTH", "3")),

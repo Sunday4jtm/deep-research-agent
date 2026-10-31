@@ -18,11 +18,13 @@ from app.contracts import (
     EVENT_NODE_STARTED,
     EVENT_REPORT_DELTA,
     EVENT_ROUND_STARTED,
+    EVENT_WARNING,
     AgentEvent,
     EventSink,
 )
 from app.tools import get_provider
 from app.tools.base import Evidence
+from app.tools.sanitize import detect_injection
 
 # FakeProvider 的测试钩子：查询带此前缀时返回空结果，
 # 用于离线验证"证据缺失 → 追问回环 → 熔断"路径（保持确定性）。
@@ -93,28 +95,64 @@ def make_retrieve_node(sink: EventSink):
 
         sink.emit(AgentEvent(EVENT_ROUND_STARTED, {"round": round_no}))
         k = max(1, settings.breadth)
+        errors: list[str] = list(state.get("errors", []))
         for subq in state.get("sub_questions", []):
             if subq in attempted:  # 跨轮去重：查过的不再查
                 continue
             attempted.append(subq)
             eids = subq_evidence.get(subq, [])
-            hits = [*provider.web_search(subq, k=k), *provider.kb_search(subq, k=k)]
-            for hit in hits:
-                eid = f"E{len(evidence) + 1}"
-                ev = replace(hit, eid=eid)  # Evidence 是 frozen dataclass
-                evidence.append(ev)
-                eids.append(eid)
-                sink.emit(
-                    AgentEvent(
-                        EVENT_EVIDENCE_ADDED,
-                        {
-                            "eid": ev.eid,
-                            "source_type": ev.source_type,
-                            "title": ev.title,
-                            "locator": ev.locator,
-                        },
+            # 分源容错（PLAN §3.4）：单源失败只记 warning + errors，
+            # 不拖垮整轮——kb 未接入（D6 前）也不影响 web 取证
+            for source, fetch in (
+                # 默认参数绑定 subq：避免闭包晚绑定陷阱（ruff B023 同款关注点）
+                ("web", lambda q=subq: provider.web_search(q, k=k)),
+                ("kb", lambda q=subq: provider.kb_search(q, k=k)),
+            ):
+                try:
+                    hits = fetch()
+                except Exception as exc:  # NotImplementedError/网络/熔断一律兜住
+                    errors.append(f"{source}/{subq[:40]}: {type(exc).__name__}")
+                    sink.emit(
+                        AgentEvent(
+                            EVENT_WARNING,
+                            {
+                                "where": source,
+                                "query": subq[:60],
+                                "error": f"{type(exc).__name__}: {exc}"[:120],
+                            },
+                        )
                     )
-                )
+                    continue
+                for hit in hits:
+                    flags = detect_injection(hit.snippet)
+                    if flags:
+                        # 只报告不拦截：内容仍作为"数据"进入证据，
+                        # 真正的隔离靠 D5 报告提示词的数据/指令分离
+                        sink.emit(
+                            AgentEvent(
+                                EVENT_WARNING,
+                                {
+                                    "where": "injection-scan",
+                                    "patterns": flags[:5],
+                                    "locator": hit.locator[:80],
+                                },
+                            )
+                        )
+                    eid = f"E{len(evidence) + 1}"
+                    ev = replace(hit, eid=eid)  # Evidence 是 frozen dataclass
+                    evidence.append(ev)
+                    eids.append(eid)
+                    sink.emit(
+                        AgentEvent(
+                            EVENT_EVIDENCE_ADDED,
+                            {
+                                "eid": ev.eid,
+                                "source_type": ev.source_type,
+                                "title": ev.title,
+                                "locator": ev.locator,
+                            },
+                        )
+                    )
             subq_evidence[subq] = eids
 
         sink.emit(
@@ -128,6 +166,7 @@ def make_retrieve_node(sink: EventSink):
             "attempted_queries": attempted,
             "subq_evidence": subq_evidence,
             "round": round_no,
+            "errors": errors,
         }
 
     return retrieve
