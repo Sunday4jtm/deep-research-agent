@@ -212,26 +212,39 @@ def make_retrieve_node(sink: EventSink):
     return retrieve
 
 
-_CLAIM_RE = re.compile(r"([\u4e00-\u9fffA-Za-z]{2,8})[\s:：]*(\d+(?:\.\d+)?%?)")
+_CLAIM_RE = re.compile(r"(?P<ctx>[\u4e00-\u9fffA-Za-z]{1,8})[\s:：]*(?P<num>\d+(?:\.\d+)?%?)")
 
 
-def _claims(text: str) -> dict[str, set[str]]:
-    """抽"指标上下文 → 数值集合"：冲突比较的是同名指标的取值，
+def _claims(text: str) -> dict[str, dict[str, str]]:
+    """抽"指标上下文 → {数值: 展示窗口}"：冲突比较的是同名指标的取值，
     不是裸数字——"BM25" 里的 25、"GPT-4" 里的 4 这类模型名数字
-    必须挂在字母上下文下，才不会被当成两边的"口径"互相污染。"""
-    claims: dict[str, set[str]] = {}
-    for ctx, num in _CLAIM_RE.findall(text):
-        claims.setdefault(ctx, set()).add(num)
+    必须挂在字母上下文下，才不会被当成两边的"口径"互相污染。
+
+    展示窗口（数值前 10 字）是给"冲突披露"指标用的：ctx 可能是 "k取"
+    这种字母+中文混排碎片，窗口里才有 "RRF 常数 k 取 60" 的完整指标词，
+    gold 对照（包含匹配）才命得住——c2 真跑实测的教训。
+    """
+    claims: dict[str, dict[str, str]] = {}
+    for m in _CLAIM_RE.finditer(text):
+        window = text[max(0, m.start() - 10): m.end()].strip()
+        claims.setdefault(m.group("ctx"), {})[m.group("num")] = window
     return claims
 
 
 def _find_conflict(kb_text: str, web_text: str) -> tuple[str, str, str] | None:
-    """返回 (指标名, kb 值, web 值)：同名指标在两源取值不同即冲突。"""
+    """返回 (展示窗口, kb 值, web 值)：同名指标在两源取值集合不同即冲突。"""
     kb = _claims(kb_text)
     web = _claims(web_text)
     for ctx, kb_vals in kb.items():
-        if ctx in web and web[ctx] != kb_vals:
-            return ctx, sorted(kb_vals)[0], sorted(web[ctx])[0]
+        web_vals = web.get(ctx)
+        if not web_vals:
+            continue
+        kb_nums = set(kb_vals)
+        if kb_nums == set(web_vals):
+            continue  # 同名指标取值一致，不算分歧
+        # 确定性取一个两源不同的数值对：kb 侧优先取"web 没有的值"
+        num = sorted(kb_nums - set(web_vals) or kb_nums)[0]
+        return kb_vals[num], num, sorted(web_vals)[0]
     return None
 
 

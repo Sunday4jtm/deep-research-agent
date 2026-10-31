@@ -1,0 +1,29 @@
+MIT License
+
+Copyright (c) 2026 Sunday4jtm
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+---
+
+附带说明（许可关系，README「与姊妹仓库的关系」一节的契约化）：
+本仓库运行时依赖姊妹仓库《AI 学习监督员》（私有项目）中的 MCP Server A/B
+与老仓库后端 REST 端点。该姊妹仓库的代码与本许可相互独立，其使用、分发
+遵循其自身约定。本仓库不含、也不分发其任何源码——这正是"MCP 协议作为
+唯一连接"这条架构边界的许可面收益。

@@ -138,8 +138,8 @@ report_delta{text} / report_reset{} / warning{code,msg} / done{citation_report} 
 | D6 ✅（2026-10-31） | 老仓库 `/api/kb/search`（X-API-Token + 契约表 + 守卫测试同步）+ MCP Server A + MCPProvider 切换；另落地 DirectProvider.kb（HTTP 兜底，Q4）与 `MCP_WEB_CMD`/`KB_API_TOKEN` 开关 | MCP 取证路径跑通 |
 | D7 ✅（2026-10-31） | MCP Server B（`ai_study` env，`KB_CHROMA_DIR` 重定向 demo/私有库）+ MCPProvider 接 kb_search/kb_status（kb 熔断独立）+ chunk 级 locator（防同文件多块被去重误吞）+ SDK 最小环境白名单转发 | ✅ 报告同时引用私有与公网来源；D7_KB_ROUNDTRIP_PASS（demo 库 18 块真实命中） |
 | D8 ✅（2026-11-01） | verifier（gaps 回环真转：gap 允许跨轮重试 + 跨源指标分歧启发式标记）+ **FastAPI SSE 网关**（api/main.py，事件契约出网）+ Streamlit 改双模式客户端（UI_MODE=gateway\|inline） | ✅ 追问回环生效（离线测试证明 gap 第二轮重试成功）；三端共用契约 |
-| D9 | Langfuse 接入 + **masking** + 从 trace 修一个真实瓶颈（留前后对比） | ✅ 追踪面板 + 修复案例 |
-| D10 | **MODE=single 基线** + 评测公式落地 + gold conflict/insufficient 夹具 + 10 题 × 2 模式 × 2 次 | ✅ 功能冻结：对照表初版 |
+| D9 ✅（2026-11-01） | Langfuse 接入（tracing.py：开关/mask/flush，callback 注入 invoke+stream）+ **trace 定位真瓶颈并修复**（检索并行化：retriever 1582→555ms -65%，证据间隔 114→0ms；合成器 11.4s 为模型本质延迟如实记录） | ✅ 追踪面板 + 修复案例（前后对比数字在案） |
+| D10 ✅（2026-11-01） | 评测框架（10 题题集+ScriptedProvider 夹具+5 指标+智谱跨族裁判+single/multi runner）+ 基线真跑（20 run：single+multi × 1 次；2 次重复全协议命令就绪） | ✅ 功能冻结：对照表初版 |
 | D11 | README（对标老项目水准）+ 架构图 + 发布检查（密钥扫描/env.example/GIF）+ LICENSE | ✅ **可发布版本**（无 Next.js 也可投递） |
 | D12~13 | 可选：Next.js 换壳（AI 生成+本人读懂数据流）+ REPLAY 回放模式 + 评测报告润色 | 做成=加分，卡壳不影响主线 |
 | D14 | 纯缓冲：录屏（3 场景）+ 10 问彩排 + Langfuse 保鲜重跑 | 交付清单核对完成 |
@@ -238,6 +238,9 @@ MIT（最大传播）vs PolyForm Strict（与老项目一致）；新仓库依�
 | 12 | `_post_with_retry` 对 4xx 重试（烧配额放大限流） | P2 | ✅ 4xx 立即报错不重试；5xx 仍重试 |
 | 13 | 报告 markdown 渲染外链图片（外泄通道） | P2 | ✅ 渲染前剥图片语法 |
 | 14 | AGENTS.md"唯一连接=MCP"与 Q4 直连兜底矛盾；PLAN 列了未实现的 citation_checked | P3 | ✅ 文档口径同步（本节 + §3.3 + AGENTS.md 红线表） |
+| 15 | 夹具题匹配失败（基线首跑 4/6 夹具题零证据）：LLM planner 子问题措辞不可控 | P1（评测） | ✅ 夹具题强制 template planner（整条链路钉死）+ 剧本改多关键词命中 |
+| 16 | 冲突指标名抽取出 "k取" 类字母+中文混排碎片，gold 对照命不住（c2 披露率 0.0） | P1（评测） | ✅ metric 改为数值前 10 字窗口（"RRF 常数 k 取 60"），c2 修复后 1.0 |
+| 17 | 注入金丝雀 multi 模式曾失守一次（single/multi×2 次中 1 次 canary 入报告） | P2（已知风险） | ⏳ 未修：temperature=0 下非确定性，候选修复=注入告警升级为 evidence 级标记/提示词强化；评测如实呈现 |
 | 15 | conftest `PYTEST_OFFLINE` 死变量 | P3 | ✅ 删除 |
 | 16 | `int()` 解析 env 手滑全站崩 | P3 | ✅ `_env_int` 容错回退默认值 |
 | 17 | `_teardown` fire-and-forget aclose（初始化失败路径泄漏） | P3 | ✅ 已随 #1 修复 |

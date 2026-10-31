@@ -54,7 +54,8 @@ def test_数字分歧必须标记冲突():
     assert len(result["conflicts"]) == 1
     conflict = result["conflicts"][0]
     assert conflict["query"] == "检索方案对比"
-    assert conflict["metric"] == "准确率"  # 同名指标、不同取值才是冲突
+    # metric = 数值前 10 字窗口：含完整指标词，gold 对照（包含匹配）才命得住
+    assert "准确率" in conflict["metric"]
     assert conflict["kb"] == "90%"
     assert conflict["web"] == "95%"
     # 每条冲突都有 warning 事件（UI 过程面板可见）

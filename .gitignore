@@ -22,3 +22,6 @@ dist/
 # 工具与系统
 .mimosa/
 .DS_Store
+
+# D10 评测运行产物（jsonl/md，随跑随生成）
+eval/results/

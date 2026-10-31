@@ -45,15 +45,21 @@ def run_one(q, mode: str) -> dict:
     会毒化后续所有测试的回环行为（本测试套件真实踩过）。
     """
     original_rounds = os.environ.get("MAX_ROUNDS", "")
+    original_planner = os.environ.get("PLANNER_MODE", "")
     os.environ["MAX_ROUNDS"] = "1" if mode == "single" else "3"
+    if q.kind in FIXTURE_KINDS:
+        # 夹具题整条链路钉死：planner 也走 template（单子问题直通）——
+        # LLM 拆解出的子问题措辞不可控，剧本证据匹配不上，指标就不是同一把尺子
+        os.environ["PLANNER_MODE"] = "template"
     get_settings.cache_clear()
     try:
         return _run_one_inner(q, mode)
     finally:
-        if original_rounds:
-            os.environ["MAX_ROUNDS"] = original_rounds
-        else:
-            os.environ.pop("MAX_ROUNDS", None)
+        for name, original in (("MAX_ROUNDS", original_rounds), ("PLANNER_MODE", original_planner)):
+            if original:
+                os.environ[name] = original
+            else:
+                os.environ.pop(name, None)
         get_settings.cache_clear()
 
 
