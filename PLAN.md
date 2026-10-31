@@ -132,7 +132,7 @@ report_delta{text} / warning{code,msg} / citation_checked{...} / done{citation_r
 | D3 | planner（结构化输出+三级降级+focus 字段）+ **`demo_notes/` 3~5 篇脱敏 ML 语料** + 独立 collection | demo 语料入库且与私人 KB 隔离 |
 | D4 | retriever（DirectProvider + BREADTH 控制）+ 失败语义 + **Prompt Injection 清洗管道 v1** | 单子问题取证完成且查询去重生效 |
 | D5 | synthesizer + **citation pass** + Streamlit（事件契约消费端）+ token_usage 展示 | ✅ 中期检查点：带引用报告 + 引用 100% 可映射 |
-| D6 | 老仓库 `/api/kb/search`（X-API-Token + 契约表 + 守卫测试同步）+ MCP Server A + MCPProvider 切换 | MCP 取证路径跑通 |
+| D6 ✅（2026-10-31） | 老仓库 `/api/kb/search`（X-API-Token + 契约表 + 守卫测试同步）+ MCP Server A + MCPProvider 切换；另落地 DirectProvider.kb（HTTP 兜底，Q4）与 `MCP_WEB_CMD`/`KB_API_TOKEN` 开关 | MCP 取证路径跑通 |
 | D7 | MCP Server B（`ai_study` env）+ 每子问题 KB+公网双源 + 跨源去重 | ✅ 报告同时引用私有与公网来源 |
 | D8 | verifier（gaps 回环 + 冲突标记）+ **FastAPI SSE 网关**（事件契约落地）+ Streamlit 改客户端 | ✅ 追问回环生效；三端共用契约 |
 | D9 | Langfuse 接入 + **masking** + 从 trace 修一个真实瓶颈（留前后对比） | ✅ 追踪面板 + 修复案例 |

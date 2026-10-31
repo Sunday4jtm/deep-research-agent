@@ -1,4 +1,4 @@
-"""DirectProvider：不经 MCP 的直连实现（D4 落地 web 侧；kb 侧 D6 接老仓库）。
+"""DirectProvider：不经 MCP 的直连实现（D4 落地 web 侧；D6 补 kb 侧 = HTTP 直连老仓库）。
 
 口径对齐老仓库 app/web_research.py：DeepSeek 官方 /v1/tools/search 与
 /v1/tools/fetch。SSRF 校验同样只做字面检查——答辩话术要如实：
@@ -121,6 +121,7 @@ class DirectProvider:
     def __init__(self) -> None:
         self._deepseek_breaker = _Breaker("deepseek")
         self._zhipu_breaker = _Breaker("zhipu")
+        self._kb_breaker = _Breaker("kb")
 
     # ---- web_search：DeepSeek 主路，智谱兜底 ----
     def web_search(self, query: str, k: int = 3) -> list[Evidence]:
@@ -238,9 +239,64 @@ class DirectProvider:
             self._deepseek_breaker.record(False)
             raise
 
-    # ---- kb：D6 接老仓库（HTTP /api/kb/search），现在保持显式不可用 ----
+    # ---- kb：HTTP 直连老仓库 /api/kb/search（Q4 的 direct 兜底；主力取证走 MCP）----
+    def _kb_get(self, path: str, params: dict) -> dict:
+        """带 X-API-Token 的 GET；错误统一翻译成人话（老仓库 401 的 detail 是前端口吻）。"""
+        settings = get_settings()
+        url = settings.kb_api_base.rstrip("/") + path
+        headers = {"X-API-Token": settings.kb_api_token} if settings.kb_api_token else {}
+        try:
+            resp = requests.get(url, params=params, headers=headers, timeout=10)
+        except requests.RequestException as exc:
+            raise WebSearchError(
+                f"老仓库后端不可达（{type(exc).__name__}）：KB_API_BASE={settings.kb_api_base}"
+                "——确认老仓库后端已启动，或改用 PROVIDER_MODE=mcp"
+            ) from exc
+        if resp.status_code == 401:
+            raise WebSearchError(
+                "老仓库令牌校验失败：KB_API_TOKEN 必须与老仓库 .env 的 APP_AUTH_TOKEN 一致"
+            )
+        try:
+            resp.raise_for_status()
+            return resp.json()
+        except (requests.RequestException, ValueError) as exc:
+            raise WebSearchError(f"老仓库响应异常（{type(exc).__name__}）") from exc
+
     def kb_search(self, query: str, k: int = 3) -> list[Evidence]:
-        raise NotImplementedError("D6 实现：老仓库 POST /api/kb/search（带 X-API-Token）")
+        if self._kb_breaker.open:
+            raise CircuitOpen(f"kb 熔断中（连续失败 {self._kb_breaker.fails} 次）")
+        try:
+            data = self._kb_get("/api/kb/search", {"q": query, "k": k})
+            out: list[Evidence] = []
+            for item in (data.get("results") or [])[:k]:
+                if not isinstance(item, dict):
+                    continue
+                text = str(item.get("text") or "")
+                source = str(item.get("source") or "")
+                if not text or not source:
+                    continue  # 无正文/无来源的块没法当证据引用，跳过
+                out.append(
+                    Evidence(
+                        eid="",
+                        source_type="kb",
+                        title=source[:120],
+                        locator=source,  # kb 证据的 locator = 来源名（PLAN §3.2）
+                        snippet=sanitize_web_text(text),
+                    )
+                )
+            self._kb_breaker.record(True)
+            return out
+        except Exception:
+            self._kb_breaker.record(False)
+            raise
 
     def kb_status(self) -> dict:
-        raise NotImplementedError("D6 实现：老仓库 GET /api/kb/status")
+        if self._kb_breaker.open:
+            raise CircuitOpen("kb 熔断中")
+        try:
+            data = self._kb_get("/api/kb/status", {})
+            self._kb_breaker.record(True)
+            return data
+        except Exception:
+            self._kb_breaker.record(False)
+            raise

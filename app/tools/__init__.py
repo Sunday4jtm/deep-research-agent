@@ -15,9 +15,9 @@ def get_provider() -> ToolProvider:
 
         return DirectProvider()
     if mode == "mcp":
-        # D6 接入：langchain-mcp-adapters 包装 MCP Server A/B，
-        # 适配成同一个 ToolProvider 接口（app/tools/mcp_provider.py）
-        raise NotImplementedError("D6 实现：MCPProvider（stdio 连接老仓库 mcp/ 下的两个 Server）")
+        from app.tools.mcp_provider import MCPProvider
+
+        return MCPProvider()
     raise ValueError(f"未知 PROVIDER_MODE：{mode}（可选 fake | direct | mcp）")
 
 

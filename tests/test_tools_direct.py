@@ -155,3 +155,101 @@ def test_validate_public_url_rejects_internal() -> None:
         with pytest.raises(WebSearchError):
             validate_public_url(bad)
     assert validate_public_url("https://example.com/a") == "https://example.com/a"
+
+
+# ============================================================
+# kb 侧（D6）：HTTP 直连老仓库 /api/kb/search（Q4 direct 兜底）
+# ============================================================
+class _FakeGetResp:
+    def __init__(self, status_code: int = 200, data: dict | None = None) -> None:
+        self.status_code = status_code
+        self._data = data or {}
+
+    def raise_for_status(self) -> None:
+        if self.status_code >= 400:
+            import http
+
+            raise direct_mod.requests.HTTPError(
+                f"{self.status_code} {http.HTTPStatus(self.status_code).phrase}"
+            )
+
+    def json(self) -> dict:
+        return self._data
+
+
+def test_kb_search映射为kb证据(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: dict = {}
+
+    def fake_get(url, params=None, headers=None, timeout=None):
+        seen.update(url=url, params=params, headers=headers)
+        return _FakeGetResp(
+            data={
+                "query": "q",
+                "results": [
+                    {"text": "知识库片段", "source": "笔记A.md", "chunk_index": 0},
+                    {"text": "", "source": "空块.md"},  # 无正文 → 跳过
+                ],
+            }
+        )
+
+    monkeypatch.setattr(direct_mod.requests, "get", fake_get)
+    monkeypatch.setenv("KB_API_BASE", "http://127.0.0.1:8000")
+    monkeypatch.setenv("KB_API_TOKEN", "tok-1")
+    get_settings.cache_clear()
+    provider = DirectProvider()
+
+    hits = provider.kb_search("什么是 RAG", k=3)
+
+    assert len(hits) == 1
+    assert hits[0].source_type == "kb"
+    assert hits[0].locator == "笔记A.md"
+    assert hits[0].title == "笔记A.md"
+    assert seen["url"] == "http://127.0.0.1:8000/api/kb/search"
+    assert seen["params"]["q"] == "什么是 RAG"
+    assert seen["headers"]["X-API-Token"] == "tok-1"
+    get_settings.cache_clear()
+
+
+def test_kb_search令牌错翻译成人话(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        direct_mod.requests, "get", lambda *a, **k: _FakeGetResp(status_code=401)
+    )
+    get_settings.cache_clear()
+    provider = DirectProvider()
+
+    with pytest.raises(WebSearchError) as excinfo:
+        provider.kb_search("q", k=3)
+
+    assert "APP_AUTH_TOKEN" in str(excinfo.value)
+    get_settings.cache_clear()
+
+
+def test_kb_search后端不可达(monkeypatch: pytest.MonkeyPatch) -> None:
+    def broken_get(*args, **kwargs):
+        raise direct_mod.requests.ConnectionError("refused")
+
+    monkeypatch.setattr(direct_mod.requests, "get", broken_get)
+    get_settings.cache_clear()
+    provider = DirectProvider()
+
+    with pytest.raises(WebSearchError) as excinfo:
+        provider.kb_search("q", k=3)
+
+    assert "老仓库后端不可达" in str(excinfo.value)
+    get_settings.cache_clear()
+
+
+def test_kb_search连续失败熔断(monkeypatch: pytest.MonkeyPatch) -> None:
+    def broken_get(*args, **kwargs):
+        raise direct_mod.requests.ConnectionError("refused")
+
+    monkeypatch.setattr(direct_mod.requests, "get", broken_get)
+    get_settings.cache_clear()
+    provider = DirectProvider()
+    for _ in range(3):
+        with pytest.raises(WebSearchError):
+            provider.kb_search("q", k=3)
+
+    with pytest.raises(CircuitOpen):
+        provider.kb_search("q", k=3)
+    get_settings.cache_clear()
