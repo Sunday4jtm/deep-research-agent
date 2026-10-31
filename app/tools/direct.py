@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import ipaddress
 import logging
+import threading
 import time
 from urllib.parse import urlparse
 
@@ -117,22 +118,30 @@ def _post_with_retry(url: str, payload: dict, headers: dict) -> dict:
 
 
 class _Breaker:
-    """连续失败计数器：成功清零，达到阈值熔断。"""
+    """连续失败计数器：成功清零，达到阈值熔断。
+
+    D9 起检索并行化（nodes.py 线程池并发调 web/kb），record 会被多线程
+    同时调——计数读写必须加锁，否则熔断阈值可能被并发竞态吞掉。
+    """
 
     def __init__(self, name: str) -> None:
         self.name = name
         self._fails = 0
+        self._lock = threading.Lock()
 
     def record(self, ok: bool) -> None:
-        self._fails = 0 if ok else self._fails + 1
+        with self._lock:
+            self._fails = 0 if ok else self._fails + 1
 
     @property
     def open(self) -> bool:
-        return self._fails >= BREAKER_THRESHOLD
+        with self._lock:
+            return self._fails >= BREAKER_THRESHOLD
 
     @property
     def fails(self) -> int:
-        return self._fails
+        with self._lock:
+            return self._fails
 
 
 class DirectProvider:

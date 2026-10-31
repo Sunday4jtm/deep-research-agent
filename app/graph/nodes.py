@@ -9,7 +9,9 @@ D3~D5 逐个替换为 LLM 版本，骨架版保留为离线测试的基准线。
 from __future__ import annotations
 
 import re
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
+from typing import Any
 
 from app.config import get_settings
 from app.contracts import (
@@ -26,6 +28,10 @@ from app.contracts import (
 from app.tools import get_provider
 from app.tools.base import Evidence, canonicalize_locator
 from app.tools.sanitize import detect_injection
+
+# 检索并行度：每轮最多同时发起 4 路（子问题×源），覆盖常见 4 子问题场景且
+# 不会把 provider 的限流窗口打爆；再大收益递减、风险上升
+_FETCH_WORKERS = 4
 
 # FakeProvider 的测试钩子：查询带此前缀时返回空结果，
 # 用于离线验证"证据缺失 → 追问回环 → 熔断"路径（保持确定性）。
@@ -100,6 +106,13 @@ def make_retrieve_node(sink: EventSink):
         sink.emit(AgentEvent(EVENT_ROUND_STARTED, {"round": round_no}))
         k = max(1, settings.breadth)
         errors: list[str] = list(state.get("errors", []))
+
+        # 先定本轮要取证的子问题（gap 允许跨轮重试），再把全部
+        # (子问题 × 源) 一次性提交线程池并行跑——trace 数据（D9，
+        # assets/_check/d9_timing.py）显示检索证据间隔 avg 114ms、
+        # 串行等待随 子问题数×breadth 线性恶化；并行化后墙钟=最慢一路。
+        # 消费仍按原顺序：事件流与 eid 编号保持确定性，变的只是"等"的方式。
+        eligible: list[str] = []
         for subq in state.get("sub_questions", []):
             if subq in attempted:
                 # 跨轮去重：查过【且有证据】的不再重复花钱；零证据的 gap 例外——
@@ -109,16 +122,26 @@ def make_retrieve_node(sink: EventSink):
                     continue
             else:
                 attempted.append(subq)
+            eligible.append(subq)
+
+        future_by_key: dict[tuple[str, str], Any] = {}
+        with ThreadPoolExecutor(max_workers=_FETCH_WORKERS) as pool:
+            for subq in eligible:
+                # 默认参数绑定 subq：避免闭包晚绑定陷阱（ruff B023 同款关注点）
+                future_by_key[(subq, "web")] = pool.submit(
+                    lambda q=subq: provider.web_search(q, k=k)
+                )
+                future_by_key[(subq, "kb")] = pool.submit(
+                    lambda q=subq: provider.kb_search(q, k=k)
+                )
+
+        for subq in eligible:
             eids = subq_evidence.get(subq, [])
             # 分源容错（PLAN §3.4）：单源失败只记 warning + errors，
             # 不拖垮整轮——kb 未接入（D6 前）也不影响 web 取证
-            for source, fetch in (
-                # 默认参数绑定 subq：避免闭包晚绑定陷阱（ruff B023 同款关注点）
-                ("web", lambda q=subq: provider.web_search(q, k=k)),
-                ("kb", lambda q=subq: provider.kb_search(q, k=k)),
-            ):
+            for source in ("web", "kb"):
                 try:
-                    hits = fetch()
+                    hits = future_by_key[(subq, source)].result()
                 except Exception as exc:  # NotImplementedError/网络/熔断一律兜住
                     errors.append(f"{source}/{subq[:40]}: {type(exc).__name__}")
                     sink.emit(
