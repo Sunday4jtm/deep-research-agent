@@ -192,21 +192,35 @@ def make_verify_node(sink: EventSink):
 
 
 def make_synth_node(sink: EventSink):
-    """综合节点：D2 骨架版——证据清单 + 未覆盖披露；D5 换 LLM 带引用报告。"""
+    """综合节点：LLM 版带引用报告 + citation pass（D5）；模板模式作离线基准。"""
 
     def synthesize(state):
         sink.emit(AgentEvent(EVENT_NODE_STARTED, {"node": "synthesizer"}))
-        evidence: list[Evidence] = state.get("evidence", [])
-        lines = [f"- {ev.title} [{ev.eid}]（{ev.locator}）" for ev in evidence]
-        report = "## 研究报告（D2 骨架版）\n\n### 证据清单\n" + "\n".join(lines)
-        gaps = state.get("gaps", [])
-        if gaps:
-            report += "\n\n### 未覆盖（诚实披露）\n" + "\n".join(f"- {q}" for q in gaps)
-        citation_report = {"total": len(evidence), "mapped": len(evidence)}
+        settings = get_settings()
+        if settings.synth_mode == "llm":
+            # 延迟 import：模板模式（离线测试）不碰 LLM 模块
+            from app.synthesizer import synthesize_report
+
+            report, usage, citation = synthesize_report(state, sink)
+        else:
+            from app.citation import check_citations
+            from app.synthesizer import template_report
+
+            report = template_report(state)
+            usage = {"synthesizer": 0}
+            citation = check_citations(
+                report, {ev.eid for ev in state.get("evidence", [])}
+            )
+            sink.emit(AgentEvent(EVENT_REPORT_DELTA, {"text": report}))
         sink.emit(AgentEvent(EVENT_NODE_FINISHED, {"node": "synthesizer"}))
-        sink.emit(AgentEvent(EVENT_REPORT_DELTA, {"text": report}))
-        # done 必须是终止事件：三端 UI 以它判定"研究结束"，前面不能还有事件
-        sink.emit(AgentEvent(EVENT_DONE, {"citation_report": citation_report}))
-        return {"report": report, "citation_report": citation_report}
+        # done 必须是终止事件：三端 UI 以它判定"研究结束"
+        sink.emit(AgentEvent(EVENT_DONE, {"citation_report": citation}))
+        merged_usage = dict(state.get("token_usage", {}))
+        merged_usage.update(usage)
+        return {
+            "report": report,
+            "citation_report": citation,
+            "token_usage": merged_usage,
+        }
 
     return synthesize

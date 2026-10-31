@@ -21,6 +21,16 @@ logger = logging.getLogger(__name__)
 _build_lock = threading.Lock()
 
 
+def estimate_tokens(text: str) -> int:
+    """粗估 token（中文≈1.5字/token、英文≈4字符/token，取中间值 3）。
+
+    为什么放 llm.py：planner 与 synthesizer 都要用，且"没有
+    usage_metadata 时也不缺数"是模型层的公共策略。P3 接入 Langfuse
+    后以 provider 返回的真实 usage 为准。
+    """
+    return max(1, len(text or "") // 3)
+
+
 def _model_chain() -> list[tuple[str, str, str, str]]:
     """按优先级返回 (provider, base_url, model, api_key) 列表。Key 缺失的跳过。
 

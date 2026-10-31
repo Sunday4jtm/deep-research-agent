@@ -12,6 +12,7 @@ import pytest
 os.environ["PROVIDER_MODE"] = "fake"
 # planner 同理：测试永远走确定性模板，LLM 版规划器由 slow 测试单独实调验证
 os.environ["PLANNER_MODE"] = "template"
+os.environ["SYNTH_MODE"] = "template"
 
 
 @pytest.fixture(autouse=True)

@@ -14,7 +14,7 @@ import re
 
 from pydantic import BaseModel, Field
 
-from app.llm import _build_chat, _model_chain
+from app.llm import _build_chat, _model_chain, estimate_tokens
 
 logger = logging.getLogger(__name__)
 
@@ -35,15 +35,6 @@ class SubQuestions(BaseModel):
         min_length=1,
         max_length=4,
     )
-
-
-def estimate_tokens(text: str) -> int:
-    """粗估 token（中文≈1.5字/token、英文≈4字符/token，取中间值 3）。
-
-    P3 接入 Langfuse 后以 provider 返回的真实 usage 为准，这个估算
-    只用于"没有 usage_metadata 时也不缺数"。
-    """
-    return max(1, len(text) // 3)
 
 
 def _usage_from(resp) -> int:

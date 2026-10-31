@@ -31,16 +31,21 @@ LangGraph 编排的多跳研究 Agent（面试作品）。私有知识库与公�
 
 ```
 app/config.py        全局配置（.env 加载，离线安全）
-app/llm.py           双模型 + 回退（加锁单飞）
+app/llm.py           三模型链 + 回退（加锁单飞）+ token 粗估
 app/contracts.py     事件契约 v1（三端共用，改动=三端同步）
+app/planner.py       LLM 规划器（结构化输出三级降级）
+app/synthesizer.py   LLM 综合器（流式报告 + 降级链）
+app/citation.py      citation pass（引用对账，评测指标来源）
 app/tools/base.py    ToolProvider 协议 + Evidence（引用编号来源）
 app/tools/fake.py    确定性离线实现（CI/评测/陌生人复现）
-app/tools/direct.py  直连实现（D4/D6 填）
+app/tools/direct.py  直连实现（web 已落地，kb 待 D6）
+app/tools/sanitize.py 清洗管道 + 注入特征检测
 app/graph/state.py   ResearchState 全字段（PLAN §3.2）
-app/graph/nodes.py   图节点工厂（D2 骨架，D3~D5 换 LLM 版）
+app/graph/nodes.py   图节点工厂（planner/retriever/verifier/synthesizer）
 app/graph/build.py   StateGraph 装配 + run_research 入口
+frontend/app.py      Streamlit 界面（事件契约消费端，后台线程+队列轮询）
 scripts/preflight.py Provider 真实预检（P0）
 scripts/spike_*      P0 两个 hello-world spike（MCP/Langfuse）
-tests/               全离线测试
+tests/               全离线测试（conftest 带断网守卫）
 .github/workflows/   GitHub Actions CI（离线）
 ```
