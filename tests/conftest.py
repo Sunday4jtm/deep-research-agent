@@ -30,5 +30,3 @@ def _block_real_network(monkeypatch: pytest.MonkeyPatch):
 
     monkeypatch.setattr(socket, "create_connection", _deny)
     monkeypatch.setattr(socket.socket, "connect", _deny)
-# 防止本机 .env 里真实 Key 让某个测试"意外走通网络"（宁可测试失败也不静默联网）
-os.environ.setdefault("PYTEST_OFFLINE", "1")

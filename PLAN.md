@@ -89,10 +89,13 @@ class ResearchState(TypedDict):
 ### 3.3 事件契约 v1（D5 定义，D8 落 FastAPI SSE）
 
 ```
-research_started / node_started{node} / node_finished{node,ms}
-round_started{n} / evidence_added{source_type,id,标题} 
-report_delta{text} / warning{code,msg} / citation_checked{...} / done{citation_report} / error{code,msg}
+research_started{question, provider_mode} / node_started{node} / node_finished{node,ms}
+round_started{n} / evidence_added{source_type,id,标题}
+report_delta{text} / report_reset{} / warning{code,msg} / done{citation_report} / error{code,msg}
 ```
+- research_started 自 D8 评审修复起带 provider_mode（UI 据此亮"离线演示"徽标）；
+  report_reset 只在"流式断流且已发出过 delta"时发，UI 收到即清空已呈现残文
+  （评审 P1-6）；citation_checked 不单发——对账数据随 done.citation_report 送达
 - 事件流同时落盘 JSONL → **REPLAY=1 回放模式**（现场网络故障兜底，D13 实现）
 
 ### 3.4 失败语义（D4 起逐步落地）
@@ -213,3 +216,30 @@ MIT（最大传播）vs PolyForm Strict（与老项目一致）；新仓库依�
 | Q2 | Next.js 定位 | **可选加分项**（D12~13），D11 先出可发布版 | 保持必做（不推荐，超支主源） |
 | Q3 | 主力模型 | **P0 预检后定**：DeepSeek 可用则维持；否则智谱+Tavily | —— |
 | Q4 | direct 兜底 | **给老仓库加 `/api/kb/search`**（带 token+契约表+测试） | 删 direct 只留 MCP（失去退路，不推荐） |
+
+## 十一、对抗性评审修复清单（2026-11-01）
+
+> 背景：对 54c9f5a~cb9baa6 做全量对抗性评审（攻击者+质疑者双视角），19 条发现。
+> P0×3 已随 D8 提交（cb9baa6）；本节登记其余各项的处置，保持"PLAN 说了就要有代码"的对账。
+
+| # | 问题 | 级别 | 处置 |
+|---|---|---|---|
+| 1 | `get_provider()` 每轮新建 → MCP 子进程泄漏（D7 后每轮漏 A+B 两个）+ 熔断跨轮失效 | P0 | ✅ 已修：按模式单例 + `_McpSession.close()`（幂等，atexit 兜底）+ `_teardown` 等 aclose 完成 |
+| 2 | CI 密钥扫描永不失败（`\|\| true` + 内联 grep 命中反而退出 0） | P0 | ✅ 已修：`check_secrets.sh --all` 单一来源，命中即红 |
+| 3 | 图执行崩溃 UI 假死（EVENT_ERROR 零发射点零消费点） | P0 | ✅ 已修：run_research 发 error 再 raise；Streamlit/网关消费 |
+| 4 | `evidence_char_budget` 全项目零消费——"双熔断之二"不存在 | P1 | ✅ synthesizer 按预算裁剪证据 + warning 披露截断条数 |
+| 5 | gaps 回环不生成新查询（空转） | P1 | ✅ D8 换路线解决：gap 跨轮重试（瞬时故障恢复价值）；查询改写归 D10 压缩节点 |
+| 6 | 流式断流降级 → UI 报告"半截+全文"拼接 | P1 | ✅ 契约加 `report_reset{}`（断流且已发过 delta 才发）；三端同步 |
+| 7 | MCP 路径 web_fetch 无本地 SSRF 校验（防线全寄老仓库进程） | P1 | ✅ 调用前先过本地 `validate_public_url`（本地+老仓库双层） |
+| 8 | KB_API_BASE 非回环且无 token = 局域网裸奔 | P2 | ✅ direct.kb fail-fast：非回环必须带 token |
+| 9 | 注入检测 10 条子串、可插空格绕过、只扫输入 | P2 | ✅ 模式扩容 + 空白归一化匹配 + 最终报告二次扫描（report-scan warning） |
+| 10 | fake 模式 UI 无标识（演示假数据不自知） | P2 | ✅ research_started 带 provider_mode + UI 徽标 |
+| 11 | URL 去重字符串全等（utm/http(s)/尾斜杠漏网） | P2 | ✅ `canonicalize_locator` 规范化后比对（kb locator 原样；不改写展示用 locator） |
+| 12 | `_post_with_retry` 对 4xx 重试（烧配额放大限流） | P2 | ✅ 4xx 立即报错不重试；5xx 仍重试 |
+| 13 | 报告 markdown 渲染外链图片（外泄通道） | P2 | ✅ 渲染前剥图片语法 |
+| 14 | AGENTS.md"唯一连接=MCP"与 Q4 直连兜底矛盾；PLAN 列了未实现的 citation_checked | P3 | ✅ 文档口径同步（本节 + §3.3 + AGENTS.md 红线表） |
+| 15 | conftest `PYTEST_OFFLINE` 死变量 | P3 | ✅ 删除 |
+| 16 | `int()` 解析 env 手滑全站崩 | P3 | ✅ `_env_int` 容错回退默认值 |
+| 17 | `_teardown` fire-and-forget aclose（初始化失败路径泄漏） | P3 | ✅ 已随 #1 修复 |
+| 18 | estimate_tokens 粗估偏差 30%+ | P3 | ⏸ 维持粗估口径（注释已声明）；D9 Langfuse 接真实 usage 后替换 |
+| 19 | planner/synthesizer 降级循环与 `invoke_with_fallback` 三处同构 | P3 | ⏸ 暂不重构：LLM 路径行为等价性离线验不了，冲刺期不动 |

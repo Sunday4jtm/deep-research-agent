@@ -31,7 +31,7 @@ import threading
 
 from app.config import get_settings
 from app.tools.base import Evidence
-from app.tools.direct import CircuitOpen, WebSearchError, _Breaker
+from app.tools.direct import CircuitOpen, WebSearchError, _Breaker, validate_public_url
 from app.tools.sanitize import sanitize_web_text
 
 logger = logging.getLogger(__name__)
@@ -234,6 +234,10 @@ class MCPProvider:
         return out
 
     def web_fetch(self, url: str) -> str:
+        # 本地先拦一层再交给老仓库：MCP 模式的 SSRF 防线不能全寄在另一个
+        # 进程里（评审 P1-7）——本地字面校验 + 老仓库 provider.fetch 校验双层。
+        # 放在 try/breaker 之外：配置类错误不是 provider 健康问题，不该计数熔断
+        validate_public_url(url)
         if self._web_breaker.open:
             raise CircuitOpen("mcp-web 熔断中")
         try:

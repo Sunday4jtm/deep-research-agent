@@ -40,10 +40,24 @@ class Settings:
     max_rounds: int          # 检索回环熔断（depth）
     breadth: int             # 每轮子问题检索上限（借鉴 dzhng/deep-research）
     evidence_char_budget: int  # 证据总字符预算（双熔断之二）
+    tracing_enabled: bool    # Langfuse 追踪开关（D9；Keys 在 .env，开关独立——离线测试默认关）
 
 
 def _env(key: str, default: str = "") -> str:
     return os.environ.get(key, default).strip()
+
+
+def _env_int(key: str, default: int) -> int:
+    """int 容错解析：.env 手滑（'3a'/误删数字）不该让全站 import 即崩（评审 P3-16）。
+
+    get_settings 被 lru_cache 后，一次解析崩溃 = 之后所有调用都拿到异常，
+    连 fake 模式的离线路径都起不来——所以宁可用默认值也不要炸。
+    """
+    raw = _env(key)
+    try:
+        return int(raw)
+    except ValueError:
+        return default
 
 
 @lru_cache(maxsize=1)
@@ -65,7 +79,8 @@ def get_settings() -> Settings:
         mcp_kb_command=_env("MCP_KB_CMD"),
         kb_api_base=_env("KB_API_BASE", "http://127.0.0.1:8000"),
         kb_api_token=_env("KB_API_TOKEN"),
-        max_rounds=int(_env("MAX_ROUNDS", "3")),
-        breadth=int(_env("BREADTH", "3")),
-        evidence_char_budget=int(_env("EVIDENCE_CHAR_BUDGET", "12000")),
+        max_rounds=_env_int("MAX_ROUNDS", 3),
+        breadth=_env_int("BREADTH", 3),
+        evidence_char_budget=_env_int("EVIDENCE_CHAR_BUDGET", 12000),
+        tracing_enabled=_env("LANGFUSE_ENABLED") in {"1", "true", "yes", "on"},
     )

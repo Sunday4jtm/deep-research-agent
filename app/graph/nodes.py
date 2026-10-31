@@ -24,7 +24,7 @@ from app.contracts import (
     EventSink,
 )
 from app.tools import get_provider
-from app.tools.base import Evidence
+from app.tools.base import Evidence, canonicalize_locator
 from app.tools.sanitize import detect_injection
 
 # FakeProvider 的测试钩子：查询带此前缀时返回空结果，
@@ -90,6 +90,9 @@ def make_retrieve_node(sink: EventSink):
         provider = get_provider()
         settings = get_settings()
         evidence: list[Evidence] = list(state.get("evidence", []))
+        # 去重键用规范化后的 locator（utUtm/http(s)/尾斜杠差异不该骗过去重）；
+        # Evidence.locator 本身保持原样——展示与引用核验要的是原始 URL（评审 P2-11）
+        seen_locators = {canonicalize_locator(ev.locator) for ev in evidence}
         attempted: list[str] = list(state.get("attempted_queries", []))
         subq_evidence: dict[str, list[str]] = dict(state.get("subq_evidence", {}))
         round_no = int(state.get("round", 0)) + 1
@@ -130,11 +133,14 @@ def make_retrieve_node(sink: EventSink):
                     )
                     continue
                 for hit in hits:
-                    if any(prev.locator == hit.locator for prev in evidence):
-                        # 跨子问题去重：同一 URL 只入册一次——
-                        # 不同子问题常搜到同一篇热门文章，重复证据会
-                        # 稀释报告并烧 token（D4 实调中 E8/E12 撞车后修复）
+                    canonical = canonicalize_locator(hit.locator)
+                    if canonical in seen_locators:
+                        # 跨子问题去重：规范化后相同视为同一来源——
+                        # 不同子问题常搜到同一篇热门文章（还常带不同 utm
+                        # 参数），重复证据会稀释报告并烧 token
+                        # （D4 实调中 E8/E12 撞车后修复；P2-11 升级为规范化比对）
                         continue
+                    seen_locators.add(canonical)
                     flags = detect_injection(hit.snippet)
                     if flags:
                         # 只报告不拦截：内容仍作为"数据"进入证据，

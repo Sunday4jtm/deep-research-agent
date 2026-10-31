@@ -21,14 +21,34 @@ INJECTION_PATTERNS = (
     "ignore previous",
     "ignore above",
     "ignore all previous",
+    "ignore prior",
     "disregard",
+    "forget previous",
+    "forget all",
+    "new instructions",
     "system prompt",
+    "you are now",
+    "act as",
+    "pretend to be",
+    "reveal your",
     "忽略以上",
     "忽略之前",
     "忽略上面",
+    "忽略先前",
+    "无视以上",
+    "无视之前",
     "你现在是",
+    "你现在是一个",
+    "假装你是",
     "必须服从",
+    "新的任务",
+    "新的指令",
 )
+
+# 匹配前双方先删空白：'忽 略 以上'、'ignore all previous' 插空格是最便宜的
+# 绕过，先归一化再比（评审 P2-9）。代价是极端情况下英文跨词误命中——
+# 本检测只发 warning 不拦截内容，误报代价可接受
+_COMPACT_PATTERNS = tuple("".join(p.split()) for p in INJECTION_PATTERNS)
 
 DEFAULT_MAX_CHARS = 4000
 
@@ -45,5 +65,9 @@ def sanitize_web_text(text: str, max_chars: int = DEFAULT_MAX_CHARS) -> str:
 
 def detect_injection(text: str) -> list[str]:
     """返回命中的注入特征模式（空列表=未命中）。只报告不拦截。"""
-    lowered = (text or "").lower()
-    return [pattern for pattern in INJECTION_PATTERNS if pattern in lowered]
+    compact = "".join((text or "").lower().split())
+    return [
+        pattern
+        for pattern, compacted in zip(INJECTION_PATTERNS, _COMPACT_PATTERNS, strict=False)
+        if compacted in compact
+    ]

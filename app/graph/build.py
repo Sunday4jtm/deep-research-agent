@@ -22,6 +22,7 @@ from app.graph.nodes import (
     make_verify_node,
 )
 from app.graph.state import ResearchState
+from app.tracing import flush as flush_tracing
 
 
 def route_after_verify(state: ResearchState) -> str:
@@ -58,7 +59,14 @@ def run_research(question: str, focus: str = "", sink: EventSink | None = None) 
     是契约里 error{code,msg} 的存在意义：失败也是事件流的一部分。
     """
     active_sink = sink if sink is not None else ListSink()
-    active_sink.emit(AgentEvent(EVENT_RESEARCH_STARTED, {"question": question}))
+    # provider_mode 进首事件：UI 据此亮"离线演示"徽标——fake 模式的证据长得
+    # 跟真的一样，不讲明来源，现场演示忘切配置就会拿固定台词当真数据（评审 P2-10）
+    active_sink.emit(
+        AgentEvent(
+            EVENT_RESEARCH_STARTED,
+            {"question": question, "provider_mode": get_settings().provider_mode},
+        )
+    )
     try:
         app = build_research_app(active_sink)
         final = app.invoke(
@@ -72,4 +80,8 @@ def run_research(question: str, focus: str = "", sink: EventSink | None = None) 
             )
         )
         raise
+    finally:
+        # 追踪冲刷放 finally：崩溃路径的 trace（含 error 现场）同样要落云，
+        # 排障时最值钱的恰恰是失败 trace（D9）
+        flush_tracing()
     return dict(final)

@@ -253,3 +253,67 @@ def test_kb_search连续失败熔断(monkeypatch: pytest.MonkeyPatch) -> None:
     with pytest.raises(CircuitOpen):
         provider.kb_search("q", k=3)
     get_settings.cache_clear()
+
+
+# ============================================================
+# 重试语义与 KB 出门守卫（评审 P2-12 / P2-8）
+# ============================================================
+class _FakeStatusResp:
+    """raise_for_status 按状态码抛 HTTPError，且带 response.status_code——
+    requests 真实行为：HTTPError 携带 response，重试分流全靠它。"""
+
+    def __init__(self, status: int) -> None:
+        self._status = status
+
+    def raise_for_status(self) -> None:
+        if self._status >= 400:
+            exc = direct_mod.requests.HTTPError(f"HTTP {self._status}")
+            exc.response = type("Resp", (), {"status_code": self._status})()
+            raise exc
+
+    def json(self) -> dict:
+        return {"results": []}
+
+
+def test_4xx不重试直接报错(monkeypatch: pytest.MonkeyPatch, no_sleep) -> None:
+    """401/403/429 是确定性失败：重发只会烧配额放大限流，1 次即报错。"""
+    calls = {"n": 0}
+
+    def responder(url, json=None, headers=None, timeout=None):
+        calls["n"] += 1
+        return _FakeStatusResp(401)
+
+    _install_http(monkeypatch, responder)
+    _with_keys(monkeypatch, deepseek="sk-test")
+    with pytest.raises(WebSearchError, match="401"):
+        DirectProvider()._deepseek_search("q", 3)
+    assert calls["n"] == 1, "4xx 必须 1 次调用即报错：不重试、也不换 trust_env 再试"
+    get_settings.cache_clear()
+
+
+def test_5xx仍然重试到退避耗尽(monkeypatch: pytest.MonkeyPatch, no_sleep) -> None:
+    """5xx 与网络错误同等待遇：2 次重试 × 2 trust_env = 4 次尝试。"""
+    calls = {"n": 0}
+
+    def responder(url, json=None, headers=None, timeout=None):
+        calls["n"] += 1
+        return _FakeStatusResp(503)
+
+    _install_http(monkeypatch, responder)
+    _with_keys(monkeypatch, deepseek="sk-test")
+    with pytest.raises(WebSearchError):
+        DirectProvider()._deepseek_search("q", 3)
+    assert calls["n"] == 2 * direct_mod.MAX_RETRIES
+    get_settings.cache_clear()
+
+
+def test_kb非回环地址无令牌拒绝出门(monkeypatch: pytest.MonkeyPatch) -> None:
+    """非回环 KB_API_BASE + 空 token = 局域网裸奔（老仓库未配 token 时鉴权全关），
+    新仓库侧必须 fail-fast（评审 P2-8）。"""
+    monkeypatch.setenv("KB_API_BASE", "http://192.168.1.9:8000")
+    monkeypatch.delenv("KB_API_TOKEN", raising=False)
+    get_settings.cache_clear()
+
+    with pytest.raises(WebSearchError, match="KB_API_TOKEN"):
+        DirectProvider().kb_search("q", k=3)
+    get_settings.cache_clear()

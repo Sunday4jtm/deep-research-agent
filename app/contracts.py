@@ -17,6 +17,9 @@ EVENT_NODE_FINISHED = "node_finished"
 EVENT_ROUND_STARTED = "round_started"
 EVENT_EVIDENCE_ADDED = "evidence_added"
 EVENT_REPORT_DELTA = "report_delta"
+# 流式断流且已发出过 delta 时发：UI 收到即清空已呈现的残文，防止降级路径的
+# 全文拼在半截后面（评审 P1-6）。只在 synthesizer 降级边界发，其他节点禁用。
+EVENT_REPORT_RESET = "report_reset"
 EVENT_WARNING = "warning"
 EVENT_DONE = "done"
 EVENT_ERROR = "error"

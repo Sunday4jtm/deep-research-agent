@@ -22,7 +22,7 @@ LangGraph 编排的多跳研究 Agent（面试作品）。私有知识库与公�
 | 密钥只进 `.env`（已 gitignore），代码里绝不出现；提交被 `scripts/check_secrets.sh` 拦截 | 面试官会翻 GitHub |
 | 安装命令必须带镜像参数（`-i https://pypi.tuna.tsinghua.edu.cn/simple`） | 本机 pypi 直连超时 |
 | 测试全离线：一律走 `FakeProvider`/Stub，禁止测试联网 | 不烧钱、CI 无需 secrets |
-| **新仓库代码零 import 老仓库**（`../智谱项目`）；唯一连接 = MCP 协议 | 架构边界（PLAN D-2），破了叙事就垮 |
+| **新仓库代码零 import 老仓库**（`../智谱项目`）；唯一运行时连接 = MCP 协议（主路）+ 老仓库 REST `/api/kb/search`（direct 兜底），两者均只读 | 架构边界（PLAN D-2），破了叙事就垮 |
 | `PROVIDER_MODE`/`WEB_PROVIDER` 等开关改动必须同步 `.env.example` 与 `PLAN.md` | 开关是评测对照与兜底的共同机制 |
 | 事件契约（`app/contracts.py`，D2 起）改动必须三端同步 | 三套 UI 共用一份契约，漏一边=功能凭空消失（老项目同款教训） |
 | LangGraph 只用 StateGraph/条件边/循环；不引 checkpoint/子图 | 2 周范围控制（PLAN 风险表） |

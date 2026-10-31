@@ -74,6 +74,9 @@ def _post_with_retry(url: str, payload: dict, headers: dict) -> dict:
     正常；根因未完全定位（无代理/CA 环境变量，疑似系统钥匙串或加速
     工具的 DNS 层）。先按环境配置发（企业 MITM 网络需要它），一旦
     失败立即用裸直连兜底——两种网络环境都能自愈，不赌根因。
+
+    为什么 4xx 不重试：401/403/429 是确定性失败（Key 错/欠费/限流），
+    原样重发只会烧配额、放大限流（评审 P2-12）；5xx 与网络错误才值得退避重试。
     """
     last: Exception | None = None
     for attempt in range(1, MAX_RETRIES + 1):
@@ -86,7 +89,24 @@ def _post_with_retry(url: str, payload: dict, headers: dict) -> dict:
                     )
                 resp.raise_for_status()
                 return resp.json()
-            except Exception as exc:  # 网络/HTTP/解析错误统一进下一级
+            except requests.HTTPError as exc:
+                status = (
+                    exc.response.status_code
+                    if getattr(exc, "response", None) is not None
+                    else 0
+                )
+                if status < 500:
+                    raise WebSearchError(f"请求被拒绝（HTTP {status}），不重试") from exc
+                last = exc
+                logger.warning(
+                    "请求失败(HTTP %s, trust_env=%s, 第%d次) %s：%s",
+                    status,
+                    trust_env,
+                    attempt,
+                    url,
+                    exc,
+                )
+            except Exception as exc:  # 网络/解析错误统一进下一级
                 last = exc
                 logger.warning(
                     "请求失败(trust_env=%s, 第%d次) %s：%s", trust_env, attempt, url, exc
@@ -243,6 +263,17 @@ class DirectProvider:
     def _kb_get(self, path: str, params: dict) -> dict:
         """带 X-API-Token 的 GET；错误统一翻译成人话（老仓库 401 的 detail 是前端口吻）。"""
         settings = get_settings()
+        host = (urlparse(settings.kb_api_base).hostname or "").lower()
+        if host not in ("127.0.0.1", "localhost", "localhost.localdomain", "::1") and (
+            not settings.kb_api_token
+        ):
+            # fail-fast（评审 P2-8）：老仓库 APP_AUTH_TOKEN 未配置时入站鉴权
+            # 整体关闭（其 main.py 的既有决定）——非回环地址 + 零令牌 = 局域网
+            # 任何人可全文检索私有库，新仓库侧必须在出门前拒绝
+            raise WebSearchError(
+                f"KB_API_BASE 指向非本机地址（{host}）但未配置 KB_API_TOKEN——"
+                "拒绝无令牌跨网访问私有库；请在 .env 配置与老仓库 APP_AUTH_TOKEN 一致的令牌"
+            )
         url = settings.kb_api_base.rstrip("/") + path
         headers = {"X-API-Token": settings.kb_api_token} if settings.kb_api_token else {}
         try:

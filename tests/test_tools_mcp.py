@@ -311,3 +311,12 @@ def test_provider_close_未连接时无害():
     """工厂 reset 会调 close()：provider 从未真正连接过时不能炸。"""
     MCPProvider().close()
     assert MCPProvider()._web is None and MCPProvider()._kb is None
+
+
+def test_web_fetch本地SSRF校验先于会话():
+    """内网 URL 必须在本地就被拦下，且不拉起 MCP 会话——
+    MCP 模式的 SSRF 防线不能全寄在老仓库进程里（评审 P1-7）。"""
+    provider = MCPProvider()
+    with pytest.raises(WebSearchError):
+        provider.web_fetch("http://127.0.0.1:8000/secret")
+    assert provider._web is None, "校验失败不该触发会话构建"

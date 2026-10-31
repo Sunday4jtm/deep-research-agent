@@ -16,6 +16,7 @@ from langchain_core.messages import BaseMessage
 from langchain_openai import ChatOpenAI
 
 from app.config import DEEPSEEK_BASE_URL, ZHIPU_BASE_URL, get_settings
+from app.tracing import callbacks as tracing_callbacks
 
 logger = logging.getLogger(__name__)
 _build_lock = threading.Lock()
@@ -77,7 +78,9 @@ def invoke_with_fallback(
     errors: list[str] = []
     for provider, base_url, model, api_key in chain:
         try:
-            resp = _build_chat(provider, base_url, model, api_key, temperature).invoke(messages)
+            resp = _build_chat(provider, base_url, model, api_key, temperature).invoke(
+                messages, config={"callbacks": tracing_callbacks()}
+            )
             return provider, resp
         except Exception as exc:  # 限流/网络/Key 问题都降级，不中断业务
             errors.append(f"{provider}/{model}: {type(exc).__name__}")

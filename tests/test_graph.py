@@ -78,3 +78,12 @@ def test_cross_subq_url_dedup(monkeypatch: pytest.MonkeyPatch) -> None:
     final = run_research("任意问题", sink=ListSink())
     assert len(final["evidence"]) == 1
     assert final["evidence"][0].title == "先到的那篇"
+
+
+def test_research_started带provider_mode() -> None:
+    """首事件带 provider_mode：UI 据此亮"离线演示"徽标（评审 P2-10）。"""
+    sink = ListSink()
+    run_research("langgraph 状态机", sink=sink)
+    first = sink.events[0]
+    assert first.type == EVENT_RESEARCH_STARTED
+    assert first.payload.get("provider_mode") == "fake"  # conftest 强制
