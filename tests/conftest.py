@@ -7,8 +7,27 @@ from __future__ import annotations
 
 import os
 
+import pytest
+
 os.environ["PROVIDER_MODE"] = "fake"
 # planner 同理：测试永远走确定性模板，LLM 版规划器由 slow 测试单独实调验证
 os.environ["PLANNER_MODE"] = "template"
+
+
+@pytest.fixture(autouse=True)
+def _block_real_network(monkeypatch: pytest.MonkeyPatch):
+    """离线红线的硬守卫：测试进程内任何网络连接尝试当场报错。
+
+    为什么不靠自觉：D4 实测——"清空 Key"的测试漏清了新加的
+    SENSENOVA_API_KEY，导致离线测试真的发起了网络调用（被 403
+    暴露才发现）。守卫比纪律可靠：宁可测试当场失败，不可静默联网。
+    """
+    import socket
+
+    def _deny(*args, **kwargs):
+        raise RuntimeError("测试尝试建立网络连接——离线红线被触碰！")
+
+    monkeypatch.setattr(socket, "create_connection", _deny)
+    monkeypatch.setattr(socket.socket, "connect", _deny)
 # 防止本机 .env 里真实 Key 让某个测试"意外走通网络"（宁可测试失败也不静默联网）
 os.environ.setdefault("PYTEST_OFFLINE", "1")

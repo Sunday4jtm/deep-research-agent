@@ -61,9 +61,11 @@ def test_llm_chain_empty_raises_before_network(monkeypatch: pytest.MonkeyPatch) 
 
     .env 里的 Key 在 import 时就被 load_dotenv 灌进 os.environ 了，
     所以这里要连环境变量一起清掉再清 lru_cache，才能模拟"全新空环境"。
+    ⚠️ 新增 provider 时必须同步这个列表——D4 曾因漏了 SENSENOVA_API_KEY
+    让"离线"测试真发起了网络调用（被 403 暴露），教训见 conftest 守卫。
     """
-    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
-    monkeypatch.delenv("ZHIPU_API_KEY", raising=False)
+    for key_var in ("DEEPSEEK_API_KEY", "SENSENOVA_API_KEY", "ZHIPU_API_KEY"):
+        monkeypatch.delenv(key_var, raising=False)
     get_settings.cache_clear()
     try:
         with pytest.raises(RuntimeError, match="未配置任何模型 Key"):

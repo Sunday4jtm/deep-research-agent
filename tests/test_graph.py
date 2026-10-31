@@ -1,6 +1,8 @@
 """D2 图骨架测试：全部离线，验证编排结构而非 LLM 行为。"""
 from __future__ import annotations
 
+import pytest
+
 from app.config import get_settings
 from app.contracts import (
     EVENT_DONE,
@@ -50,3 +52,29 @@ def test_citation_ids_sequential() -> None:
     final = run_research("langgraph 状态机")
     eids = [ev.eid for ev in final["evidence"]]
     assert eids == [f"E{i + 1}" for i in range(len(eids))]
+
+
+def test_cross_subq_url_dedup(monkeypatch: pytest.MonkeyPatch) -> None:
+    """同一 URL 只入册一次：D4 实调中两个子问题搜到同一篇文章（E8/E12）。"""
+    from app.tools.base import Evidence
+
+    class _DupProvider:
+        def web_search(self, query: str, k: int = 3) -> list[Evidence]:
+            return [
+                Evidence("", "web", "先到的那篇", "https://same.example/x", "a"),
+                Evidence("", "web", "重复的那篇", "https://same.example/x", "b"),
+            ]
+
+        def web_fetch(self, url: str) -> str:
+            return ""
+
+        def kb_search(self, query: str, k: int = 3) -> list[Evidence]:
+            return []
+
+        def kb_status(self) -> dict:
+            return {}
+
+    monkeypatch.setattr("app.graph.nodes.get_provider", lambda: _DupProvider())
+    final = run_research("任意问题", sink=ListSink())
+    assert len(final["evidence"]) == 1
+    assert final["evidence"][0].title == "先到的那篇"

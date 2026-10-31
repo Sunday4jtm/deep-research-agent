@@ -124,6 +124,11 @@ def make_retrieve_node(sink: EventSink):
                     )
                     continue
                 for hit in hits:
+                    if any(prev.locator == hit.locator for prev in evidence):
+                        # 跨子问题去重：同一 URL 只入册一次——
+                        # 不同子问题常搜到同一篇热门文章，重复证据会
+                        # 稀释报告并烧 token（D4 实调中 E8/E12 撞车后修复）
+                        continue
                     flags = detect_injection(hit.snippet)
                     if flags:
                         # 只报告不拦截：内容仍作为"数据"进入证据，
