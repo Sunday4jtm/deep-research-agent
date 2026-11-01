@@ -1,0 +1,10 @@
+# 研知 · 前端主题（D11+ 视觉升级）
+# 设计参照：GPT Researcher（深色 + teal 强调、向导式研究流）与
+# Streamlit 官方 theming 指南；只调色，不改任何交互逻辑。
+[theme]
+base = "dark"
+primaryColor = "#14B8A6"            # teal-500：主按钮/链接/焦点
+backgroundColor = "#0B1020"          # 深海军蓝底
+secondaryBackgroundColor = "#131C33" # 卡片/侧栏底
+textColor = "#E6EAF2"
+font = "sans serif"
