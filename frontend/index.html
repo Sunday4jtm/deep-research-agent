@@ -49,7 +49,12 @@
         padding: 9px 18px; font: inherit; font-weight: 600; cursor: pointer; }
   .go:hover { background: var(--accent); }
   .go:disabled { background: #1b1d1f; color: var(--faint); cursor: default; }
-  .chips { display: flex; gap: 8px; justify-content: center; margin-top: 18px; flex-wrap: wrap; }
+  .modes { display: flex; gap: 8px; justify-content: center; margin-top: 20px; }
+  .mode-chip { font-size: 12.5px; color: var(--muted); border: 1px solid var(--border);
+               background: none; border-radius: 8px; padding: 6px 14px; cursor: pointer; }
+  .mode-chip.on { color: var(--accent); border-color: var(--accent-dim);
+                  background: rgba(31,165,149,.08); }
+  .chips { display: flex; gap: 8px; justify-content: center; margin-top: 14px; flex-wrap: wrap; }
   .chip { font-size: 12.5px; color: var(--muted); border: 1px solid var(--border);
           border-radius: 999px; padding: 5px 14px; cursor: pointer; background: none; }
   .chip:hover { color: var(--text-2); border-color: #3a3d41; }
@@ -132,6 +137,10 @@
       <textarea id="q" rows="1" placeholder="例：混合检索相比纯向量检索解决了什么问题？"></textarea>
       <button class="go" id="go">开始研究</button>
     </div>
+    <div class="modes">
+      <button class="mode-chip on" data-mode="research" id="modeR">流水线模式（可评测）</button>
+      <button class="mode-chip" data-mode="react" id="modeA">自主 Agent（ReAct）</button>
+    </div>
     <div class="chips" id="chips"></div>
     <div class="hint">Enter 换行 · 点击建议可直接开始 · 取证链路走 MCP stdio（私有库 + 公网）</div>
   </section>
@@ -193,6 +202,16 @@ for (const t of EXAMPLES) {
 
 /* ---------- 状态机 ---------- */
 let running = false;
+let agentMode = localStorage.getItem("agentMode") || "research";
+for (const b of document.querySelectorAll(".mode-chip")) {
+  b.onclick = () => {
+    agentMode = b.dataset.mode;
+    localStorage.setItem("agentMode", agentMode);
+    for (const x of document.querySelectorAll(".mode-chip"))
+      x.classList.toggle("on", x.dataset.mode === agentMode);
+  };
+  b.classList.toggle("on", b.dataset.mode === agentMode);
+}
 const setUI = (home, run) => { $("home").style.display = home; $("run").style.display = run; };
 const setDot = (cls, text) => { $("dot").className = "dot " + cls; $("statusText").textContent = text; };
 const addLog = (type, payload, cls) => {
@@ -224,7 +243,7 @@ async function start() {
   try {
     const resp = await fetch("/api/research", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question }),
+      body: JSON.stringify({ question, agent_mode: agentMode }),
     });
     if (!resp.ok) throw new Error("HTTP " + resp.status);
     const reader = resp.body.getReader();
@@ -254,6 +273,7 @@ async function start() {
     switch (ev.type) {
       case "research_started":
         if (p.provider_mode) $("modePill").textContent = p.provider_mode;
+        if (p.agent_mode) $("modePill").textContent = p.provider_mode + " · " + (p.agent_mode === "react" ? "ReAct" : "pipeline");
         setDot("run", "规划中…"); $("barFill").style.width = "12%"; break;
       case "round_started":
         $("roundText").textContent = "第 " + p.round + " 轮";

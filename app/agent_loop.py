@@ -23,9 +23,11 @@ from langchain_core.tools import tool
 
 from app.config import get_settings
 from app.contracts import (
+    EVENT_DONE,
     EVENT_EVIDENCE_ADDED,
     EVENT_NODE_FINISHED,
     EVENT_NODE_STARTED,
+    EVENT_REPORT_DELTA,
     EVENT_THOUGHT,
     EVENT_WARNING,
     AgentEvent,
@@ -209,6 +211,11 @@ class _ReactLoop:
             report = (
                 "## 未覆盖与局限\n\nAgent 在步数上限内未能产出报告，请重试或换问题。"
             )
+        # 终止事件补发（契约红线）：ReAct 没有流水线的 synth 节点，报告与
+        # done 必须在这里发——否则网关兜底会误判"线程死亡"，前端也永远
+        # 拿不到报告（实机踩过：研究完成却显示"线程异常退出"）
+        self.sink.emit(AgentEvent(EVENT_REPORT_DELTA, {"text": report}))
+        self.sink.emit(AgentEvent(EVENT_DONE, {"citation_report": self._cite(report)}))
         return {
             "question": self.question,
             "focus": self.focus,
