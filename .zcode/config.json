@@ -1,0 +1,7 @@
+{
+  "plugins": {
+    "enabledPlugins": {
+      "mimosa@zcode-plugins-official": true
+    }
+  }
+}
