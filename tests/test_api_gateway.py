@@ -108,3 +108,12 @@ def test_health探活(gateway):
 
     assert resp.status_code == 200
     assert resp.json() == {"status": "ok"}
+
+
+def test_静态前端挂在根路径不影响API(gateway):
+    """单端口同时服务 UI 与 API：GET / 出研究台页面，/api/* 照常。"""
+    client, _ = gateway
+    r = client.get("/")
+    assert r.status_code == 200
+    assert "研知" in r.text
+    assert client.get("/api/health").json() == {"status": "ok"}

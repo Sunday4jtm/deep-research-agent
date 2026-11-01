@@ -26,9 +26,11 @@ import json
 import logging
 import queue
 import threading
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from app.contracts import (
@@ -125,3 +127,11 @@ def research(req: ResearchRequest) -> StreamingResponse:
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+# 静态前端（frontend/index.html）挂在根路径：一个端口同时服务 API 与 UI。
+# 为什么挂在 "/" 而不是 "/ui"：这是研究台的入口页，用户只记一个地址；
+# FastAPI 按注册顺序匹配，/api/* 路由在前不受影响。
+_FRONTEND_DIR = Path(__file__).resolve().parents[1] / "frontend"
+if _FRONTEND_DIR.is_dir():
+    app.mount("/", StaticFiles(directory=_FRONTEND_DIR, html=True), name="ui")

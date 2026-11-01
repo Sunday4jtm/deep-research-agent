@@ -79,9 +79,9 @@ cp .env.example .env
 # 2) 真实预检：chat/search/fetch/sensenova 一次真调用
 python scripts/preflight.py
 
-# 3) 起界面（gateway 模式 = 网关 + Streamlit 两个进程）
+# 3) 起研究台：一个端口同时服务 UI 与 API，浏览器开 127.0.0.1:8000 即用
 uvicorn api.main:app --port 8000
-streamlit run frontend/app.py   # 另一个终端；UI_MODE=inline 可单进程直调
+# （Streamlit 版保留为备选界面：streamlit run frontend/app.py）
 ```
 
 姊妹仓库（MCP Server A/B 与老后端）的启动见 `AGENTS.md` 代码地图；

@@ -45,7 +45,8 @@ app/graph/state.py   ResearchState 全字段（PLAN §3.2）
 app/graph/nodes.py   图节点工厂（planner/retriever/verifier/synthesizer）
 app/graph/build.py   StateGraph 装配 + run_research 入口
 api/main.py          FastAPI SSE 网关（事件契约出网边界，D8）
-frontend/app.py      Streamlit 界面（SSE 客户端/inline 直调双模式，UI_MODE 切换）
+frontend/index.html  静态研究台（默认 UI，网关同端口直出，SSE 消费端）
+frontend/app.py      Streamlit 界面（备选；SSE 客户端/inline 双模式，UI_MODE 切换）
 eval/                D10 评测：题集/夹具/指标/裁判/runner（结果落 eval/results/，已 gitignore）
 scripts/preflight.py Provider 真实预检（P0）
 scripts/spike_*      P0 两个 hello-world spike（MCP/Langfuse）

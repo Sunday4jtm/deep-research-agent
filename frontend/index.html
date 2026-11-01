@@ -1,0 +1,308 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>研知 · Deep Research Agent</title>
+<style>
+  /* ============================================================
+     研知 · 静态前端（Perplexity 答案页 × Linear 暗色，手写无依赖）
+     色板：近黑底 / 灰阶层次 / 发丝边框 / 唯一 teal 强调
+     ============================================================ */
+  :root {
+    --bg: #0f1011; --panel: #17181a; --border: #26282b; --border-soft: #1f2124;
+    --text: #ededf0; --text-2: #b6bac1; --muted: #8a8f98; --faint: #5a5f66;
+    --accent: #3ecfbb; --accent-dim: #1fa595;
+    --kb: #a78bfa; --web: #60a5fa;
+    --warn: #c8a94e; --err: #e07a6e; --ok: #4cb782;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--text); }
+  body { font: 15px/1.7 -apple-system, "SF Pro Text", "PingFang SC", "Segoe UI", "Microsoft YaHei", sans-serif;
+         -webkit-font-smoothing: antialiased; }
+
+  header { display: flex; align-items: center; justify-content: space-between;
+           padding: 14px 28px; border-bottom: 1px solid var(--border-soft); }
+  .wordmark { font-weight: 650; letter-spacing: -0.02em; font-size: 15px; }
+  .wordmark em { font-style: normal; color: var(--accent); }
+  header .right { display: flex; align-items: center; gap: 14px; font-size: 12.5px; color: var(--muted); }
+  header a { color: var(--muted); text-decoration: none; }
+  header a:hover { color: var(--text-2); }
+  .mode { font-family: var(--mono); font-size: 11.5px; color: var(--accent);
+          border: 1px solid #23413c; border-radius: 999px; padding: 2px 9px; }
+
+  main { max-width: 780px; margin: 0 auto; padding: 0 20px 80px; }
+
+  /* ---- 首屏：大输入 ---- */
+  #home { padding-top: 13vh; text-align: center; }
+  #home h1 { font-size: 30px; font-weight: 650; letter-spacing: -0.02em; margin: 0 0 8px; }
+  #home .sub { color: var(--muted); font-size: 14px; margin-bottom: 28px; }
+  .prompt { display: flex; gap: 10px; align-items: flex-end;
+            background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+            padding: 12px 12px 12px 16px; transition: border-color .15s; }
+  .prompt:focus-within { border-color: var(--accent-dim); }
+  .prompt textarea { flex: 1; background: none; border: none; outline: none; resize: none;
+                     color: var(--text); font: inherit; line-height: 1.6; max-height: 160px; }
+  .prompt textarea::placeholder { color: var(--faint); }
+  .go { background: var(--accent-dim); color: #06110f; border: none; border-radius: 8px;
+        padding: 9px 18px; font: inherit; font-weight: 600; cursor: pointer; }
+  .go:hover { background: var(--accent); }
+  .go:disabled { background: #1b1d1f; color: var(--faint); cursor: default; }
+  .chips { display: flex; gap: 8px; justify-content: center; margin-top: 18px; flex-wrap: wrap; }
+  .chip { font-size: 12.5px; color: var(--muted); border: 1px solid var(--border);
+          border-radius: 999px; padding: 5px 14px; cursor: pointer; background: none; }
+  .chip:hover { color: var(--text-2); border-color: #3a3d41; }
+  .hint { margin-top: 22px; font-size: 12px; color: var(--faint); }
+
+  /* ---- 运行态 ---- */
+  #run { padding-top: 40px; display: none; }
+  .status { display: flex; align-items: center; gap: 10px; font-size: 13.5px; color: var(--text-2);
+            min-height: 22px; }
+  .dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--faint); }
+  .dot.run { background: #e2b93b; animation: pulse 1.2s ease-in-out infinite; }
+  .dot.ok { background: var(--ok); } .dot.err { background: var(--err); }
+  @keyframes pulse { 50% { opacity: .35; } }
+  .round { font-family: var(--mono); font-size: 11.5px; color: var(--faint); }
+  .bar { height: 2px; background: var(--border-soft); border-radius: 2px; margin: 10px 0 26px; overflow: hidden; }
+  .bar > i { display: block; height: 100%; width: 0; background: var(--accent-dim); transition: width .6s; }
+
+  .sect { font-size: 11px; letter-spacing: .1em; text-transform: uppercase;
+          color: var(--faint); margin: 26px 0 10px; }
+  #sources { display: flex; flex-wrap: wrap; gap: 7px; min-height: 0; }
+  #sources:empty { display: none; }
+  .src { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--text-2);
+         background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+         padding: 5px 11px; max-width: 340px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .src i { width: 6px; height: 6px; border-radius: 50%; flex: none; }
+  .src.kb i { background: var(--kb); } .src.web i { background: var(--web); }
+
+  /* ---- 报告 ---- */
+  #reportCard { display: none; margin-top: 26px; background: var(--panel);
+                border: 1px solid var(--border); border-radius: 12px; padding: 26px 30px; }
+  #report { font-size: 14.5px; color: #d6d9dd; }
+  #report h1, #report h2, #report h3 { letter-spacing: -0.01em; color: var(--text); margin: 1.4em 0 .5em; }
+  #report h1 { font-size: 20px; } #report h2 { font-size: 17px; } #report h3 { font-size: 15px; }
+  #report p { margin: .8em 0; }
+  #report li { margin: .35em 0; }
+  #report code { font-family: var(--mono); font-size: 12.5px; background: #0f1011;
+                 border: 1px solid var(--border-soft); border-radius: 4px; padding: 1px 5px; }
+  #report a { color: var(--accent); text-decoration: none; }
+  .caret { display: inline-block; width: 7px; height: 15px; background: var(--accent);
+           vertical-align: -2px; animation: pulse 1s steps(2) infinite; }
+
+  /* 引用对账数字组 */
+  #stats { display: none; gap: 34px; margin: 22px 2px 0; }
+  #stats div b { display: block; font-size: 22px; font-weight: 600; letter-spacing: -0.01em; }
+  #stats div span { font-size: 11.5px; color: var(--muted); }
+  #stats .bad b { color: var(--err); }
+
+  /* 事件日志 */
+  details { margin-top: 30px; border-top: 1px solid var(--border-soft); padding-top: 14px; }
+  summary { cursor: pointer; font-size: 12.5px; color: var(--muted); }
+  #log { font-family: var(--mono); font-size: 11.5px; color: var(--faint);
+         max-height: 260px; overflow: auto; margin-top: 10px; }
+  #log div { padding: 1px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #log .w { color: var(--warn); } #log .e { color: var(--err); }
+
+  .errbox { display: none; margin-top: 18px; border: 1px solid #3a2b29; background: #1c1413;
+            color: var(--err); border-radius: 10px; padding: 12px 16px; font-size: 13.5px; }
+</style>
+</head>
+<body>
+<header>
+  <span class="wordmark">研知 <em>·</em> Deep Research Agent</span>
+  <span class="right">
+    <span class="mode" id="modePill">…</span>
+    <a href="https://cloud.langfuse.com" target="_blank" rel="noreferrer">Langfuse ↗</a>
+  </span>
+</header>
+
+<main>
+  <section id="home">
+    <h1>今天研究什么？</h1>
+    <div class="sub">私有知识库与公网双源取证 · 多跳验证回环 · 每句结论带引用</div>
+    <div class="prompt">
+      <textarea id="q" rows="1" placeholder="例：混合检索相比纯向量检索解决了什么问题？"></textarea>
+      <button class="go" id="go">开始研究</button>
+    </div>
+    <div class="chips" id="chips"></div>
+    <div class="hint">Enter 换行 · 点击建议可直接开始 · 取证链路走 MCP stdio（私有库 + 公网）</div>
+  </section>
+
+  <section id="run" style="display: none">
+    <div class="status"><i class="dot run" id="dot"></i><span id="statusText">连接网关…</span>
+      <span class="round" id="roundText"></span></div>
+    <div class="bar"><i id="barFill" style="width: 4%"></i></div>
+    <div class="sect" id="srcSect" style="display:none">取证来源</div>
+    <div id="sources"></div>
+    <div id="reportCard"><div id="report"></div></div>
+    <div id="stats"></div>
+    <div class="errbox" id="errbox"></div>
+    <details><summary>研究过程事件</summary><div id="log"></div></details>
+  </section>
+</main>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const IMG_RE = /!\[[^\]]*\]\([^)]*\)/g;   // 报告剥外链图片（数据外泄通道，同后端口径）
+
+/* ---------- 极简 markdown 渲染：先转义再白名单转换，防注入 ---------- */
+function esc(s) { return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+function md(src) {
+  const lines = esc(src).split("\n");
+  const out = [];
+  let inList = false;
+  const closeList = () => { if (inList) { out.push("</ul>"); inList = false; } };
+  for (const raw of lines) {
+    let line = raw
+      .replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")
+      .replace(/`([^`]+)`/g, "<code>$1</code>")
+      .replace(/\[E(\d+)\]/g, '<sup style="color:var(--accent);font-size:11px">E$1</sup>');
+    const h = /^(#{1,3})\s+(.*)$/.exec(line);
+    const li = /^\s*[-*]\s+(.*)$/.exec(line);
+    if (h) { closeList(); out.push(`<h${h[1].length + 1}>${h[2]}</h${h[1].length + 1}>`); }
+    else if (li) { if (!inList) { out.push("<ul>"); inList = true; } out.push(`<li>${li[1]}</li>`); }
+    else if (line.trim() === "") { closeList(); }
+    else { closeList(); out.push(`<p>${line}</p>`); }
+  }
+  closeList();
+  return out.join("\n");
+}
+
+/* ---------- 建议问题 ---------- */
+const EXAMPLES = [
+  "混合检索相比纯向量检索解决了什么问题？",
+  "RRF 融合的原理是什么？公网推荐参数和私有库一致吗？",
+  "Agentic RAG 的多跳研究和单轮 RAG 差在哪？",
+];
+for (const t of EXAMPLES) {
+  const b = document.createElement("button");
+  b.className = "chip"; b.textContent = t;
+  b.onclick = () => { $("q").value = t; start(); };
+  $("chips").appendChild(b);
+}
+
+/* ---------- 状态机 ---------- */
+let running = false;
+const setUI = (home, run) => { $("home").style.display = home; $("run").style.display = run; };
+const setDot = (cls, text) => { $("dot").className = "dot " + cls; $("statusText").textContent = text; };
+const addLog = (type, payload, cls) => {
+  const d = document.createElement("div");
+  if (cls) d.className = cls;
+  d.textContent = `[${type}] ` + JSON.stringify(payload).slice(0, 160);
+  $("log").appendChild(d);
+};
+
+async function start() {
+  const question = $("q").value.trim();
+  if (!question || running) return;
+  running = true;
+  $("go").disabled = true;
+  setUI("none", "block");
+  $("sources").innerHTML = ""; $("report").innerHTML = ""; $("log").innerHTML = "";
+  $("stats").innerHTML = ""; $("stats").style.display = "none";
+  $("reportCard").style.display = "none"; $("errbox").style.display = "none";
+  $("srcSect").style.display = "none";
+  setDot("run", "连接网关…");
+  $("barFill").style.width = "4%";
+
+  let text = "";
+  const render = () => {
+    $("report").innerHTML = md(text.replace(IMG_RE, "[图片已屏蔽]")) +
+      (running ? '<span class="caret"></span>' : "");
+  };
+
+  try {
+    const resp = await fetch("/api/research", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question }),
+    });
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+    const reader = resp.body.getReader();
+    const dec = new TextDecoder();
+    let buf = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let idx;
+      while ((idx = buf.indexOf("\n\n")) >= 0) {
+        const frame = buf.slice(0, idx); buf = buf.slice(idx + 2);
+        if (!frame.startsWith("data: ")) continue;
+        handle(JSON.parse(frame.slice(6)));
+      }
+    }
+  } catch (err) {
+    setDot("err", "失败：" + err.message + " —— 确认网关已启动（uvicorn api.main:app）");
+  }
+  running = false;
+  $("go").disabled = false;
+  document.querySelector(".caret")?.remove();
+
+  function handle(ev) {
+    const p = ev.payload || {};
+    addLog(ev.type, p, ev.type === "warning" ? "w" : ev.type === "error" ? "e" : "");
+    switch (ev.type) {
+      case "research_started":
+        if (p.provider_mode) $("modePill").textContent = p.provider_mode;
+        setDot("run", "规划中…"); $("barFill").style.width = "12%"; break;
+      case "round_started":
+        $("roundText").textContent = "第 " + p.round + " 轮";
+        $("barFill").style.width = Math.min(15 + p.round * 18, 70) + "%";
+        setDot("run", "取证中…"); break;
+      case "evidence_added": {
+        $("srcSect").style.display = "block";
+        const el = document.createElement("span");
+        el.className = "src " + p.source_type;
+        el.innerHTML = "<i></i>[" + p.eid + "] " + (p.title || p.locator || "").slice(0, 60);
+        el.title = p.locator || "";
+        $("sources").appendChild(el);
+        setDot("run", "取证中 · 已 " + $("sources").children.length + " 条来源"); break;
+      }
+      case "report_delta":
+        $("reportCard").style.display = "block";  // 第一段到达即亮卡
+        text += p.text || ""; render();
+        setDot("run", "撰写报告 · " + text.length + " 字");
+        $("barFill").style.width = "82%"; break;
+      case "report_reset":
+        text = ""; $("report").innerHTML = ""; break;
+      case "warning":
+        break;
+      case "error":
+        setDot("err", "失败 · " + (p.msg || "未知错误")); break;
+      case "done": {
+        const c = p.citation_report || {};
+        const bad = (c.unmapped || []).length > 0;
+        $("stats").style.display = "flex";
+        $("stats").innerHTML =
+          `<div><b>${c.refs_total ?? "-"}</b><span>引用出现</span></div>` +
+          `<div><b>${c.refs_unique ?? "-"}</b><span>去重编号</span></div>` +
+          `<div><b>${c.mapped ?? "-"}</b><span>可映射</span></div>` +
+          `<div><b>${c.evidence_total ?? "-"}</b><span>证据</span></div>` +
+          `<div${bad ? ' class="bad"' : ""}><b>${bad ? c.unmapped.length + " 个" : "全部映射"}</b><span>对账结论</span></div>`;
+        setDot("ok", "研究完成");
+        $("barFill").style.width = "100%";
+        $("roundText").textContent = ""; break;
+      }
+    }
+  }
+}
+
+$("go").onclick = start;
+$("q").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); start(); }
+});
+$("q").addEventListener("input", (e) => {
+  e.target.style.height = "auto";
+  e.target.style.height = Math.min(e.target.scrollHeight, 160) + "px";
+});
+
+/* 首屏探活：网关不在就明确告知（否则用户对着静态页不知道差什么） */
+fetch("/api/health").then(r => r.json()).catch(() => {
+  setDot("err", "网关未启动：先运行 uvicorn api.main:app --port 8000");
+});
+</script>
+</body>
+</html>
