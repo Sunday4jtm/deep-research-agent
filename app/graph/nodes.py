@@ -8,11 +8,13 @@ D3~D5 逐个替换为 LLM 版本，骨架版保留为离线测试的基准线。
 """
 from __future__ import annotations
 
+import logging
 import re
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from typing import Any
 
+from app import memory
 from app.config import get_settings
 from app.contracts import (
     EVENT_DONE,
@@ -21,6 +23,7 @@ from app.contracts import (
     EVENT_NODE_STARTED,
     EVENT_REPORT_DELTA,
     EVENT_ROUND_STARTED,
+    EVENT_THOUGHT,
     EVENT_WARNING,
     AgentEvent,
     EventSink,
@@ -28,6 +31,8 @@ from app.contracts import (
 from app.tools import get_provider
 from app.tools.base import Evidence, canonicalize_locator
 from app.tools.sanitize import detect_injection
+
+logger = logging.getLogger(__name__)
 
 # 检索并行度：每轮最多同时发起 4 路（子问题×源），覆盖常见 4 子问题场景且
 # 不会把 provider 的限流窗口打爆；再大收益递减、风险上升
@@ -39,23 +44,53 @@ EMPTY_QUERY_PREFIX = "EMPTY::"
 
 
 def make_plan_node(sink: EventSink):
-    """拆解研究问题。D2 骨架：单子问题直通；D3 换 LLM 拆解 + 三级降级。"""
+    """拆解研究问题。D2 骨架：单子问题直通；D3 换 LLM 拆解 + 三级降级。
+
+    v2.3：规划前召回跨 run 记忆注入 prompt（过往研究的 learnings 作参考
+    素材，明确标注"勿照抄"防旧结论污染），并发出第一条思考链事件。"""
 
     def plan(state):
         sink.emit(AgentEvent(EVENT_NODE_STARTED, {"node": "planner"}))
         settings = get_settings()
+        memories = memory.recall(state["question"])
+        if memories:
+            text = "；".join(
+                f"「{m['question'][:30]}」→ {'；'.join(m['learnings'][:2])}"
+                for m in memories
+            )
+            sink.emit(
+                AgentEvent(
+                    EVENT_THOUGHT,
+                    {
+                        "stage": "memory",
+                        "text": f"召回 {len(memories)} 条过往研究记忆：{text[:150]}",
+                    },
+                )
+            )
         if settings.planner_mode == "llm":
             # 延迟 import：template 模式（离线测试）不应该碰 LLM 模块
             from app.planner import plan_subquestions
 
             sub_questions, usage = plan_subquestions(
-                state["question"], state.get("focus", "")
+                state["question"], state.get("focus", ""), memories
             )
         else:
             from app.planner import template_plan
 
             sub_questions = template_plan(state["question"])
             usage = {"planner": 0}
+        sink.emit(
+            AgentEvent(
+                EVENT_THOUGHT,
+                {
+                    "stage": "plan",
+                    "text": "拆解为 "
+                    + str(len(sub_questions))
+                    + " 个子问题："
+                    + "；".join(q[:28] for q in sub_questions[:4]),
+                },
+            )
+        )
         sink.emit(
             AgentEvent(
                 EVENT_NODE_FINISHED,
@@ -113,26 +148,35 @@ def make_retrieve_node(sink: EventSink):
         # 串行等待随 子问题数×breadth 线性恶化；并行化后墙钟=最慢一路。
         # 消费仍按原顺序：事件流与 eid 编号保持确定性，变的只是"等"的方式。
         eligible: list[str] = []
+        query_for: dict[str, str] = {}
+        rewritten = dict(state.get("rewritten", {}))
         for subq in state.get("sub_questions", []):
             if subq in attempted:
                 # 跨轮去重：查过【且有证据】的不再重复花钱；零证据的 gap 例外——
-                # 上一轮很可能是瞬时失败（限流/熔断/超时），回环的价值正在于重试。
-                # dedup 防的是"重复成功的花费"，不是"失败不许再试"（D8 前回环空转）
+                # 反思器（v2.3）已为它生成改写查询，用新查询重试=循环真转；
+                # 无改写时退回原查询（瞬时失败重试语义，D8）。
                 if subq_evidence.get(subq):
                     continue
+                query_for[subq] = rewritten.get(subq, subq)
             else:
                 attempted.append(subq)
+                query_for[subq] = subq
             eligible.append(subq)
+        for subq in eligible:
+            # gap 重试的改写查询也入册（attempted 只按原子问题名去重，
+            # 查询文本照记——排障时能看到"实际发出去的是什么"）
+            if query_for[subq] != subq:
+                attempted.append(query_for[subq])
 
         future_by_key: dict[tuple[str, str], Any] = {}
         with ThreadPoolExecutor(max_workers=_FETCH_WORKERS) as pool:
             for subq in eligible:
-                # 默认参数绑定 subq：避免闭包晚绑定陷阱（ruff B023 同款关注点）
+                # 默认参数绑定 subq/query：避免闭包晚绑定陷阱（ruff B023 同款关注点）
                 future_by_key[(subq, "web")] = pool.submit(
-                    lambda q=subq: provider.web_search(q, k=k)
+                    lambda q=query_for[subq]: provider.web_search(q, k=k)
                 )
                 future_by_key[(subq, "kb")] = pool.submit(
-                    lambda q=subq: provider.kb_search(q, k=k)
+                    lambda q=query_for[subq]: provider.kb_search(q, k=k)
                 )
 
         for subq in eligible:
@@ -295,15 +339,95 @@ def make_verify_node(sink: EventSink):
                 )
             )
 
+        # ---- LLM 反思（v2.3 思考链核心）：有 gap 且还有回环预算时，
+        # 让模型"看一眼已有证据"产出两类思考——learnings（本轮沉淀）与
+        # gap 子问题的改写查询（下一轮用新查询而不是原句重试）。
+        # 失败/关闭 → 静默回退为"原查询重试"（D8 语义），循环不断。
+        settings = get_settings()
+        learnings = list(state.get("learnings", []))
+        rewritten = dict(state.get("rewritten", {}))
+        if (
+            settings.reflect_mode == "llm"
+            and gaps
+            and int(state.get("round", 0)) < settings.max_rounds
+        ):
+            try:
+                learned, rewritten = _reflect(state, gaps, evidence)
+                learnings.extend(learned)
+                if learned or rewritten:
+                    sink.emit(
+                        AgentEvent(
+                            EVENT_THOUGHT,
+                            {
+                                "stage": "reflect",
+                                "text": f"沉淀 {len(learned)} 条；改写 {len(rewritten)} 个查询："
+                                + "；".join(
+                                    f"「{q[:24]}→{nq[:24]}」" for q, nq in rewritten.items()
+                                )[:160],
+                            },
+                        )
+                    )
+            except Exception as exc:  # noqa: BLE001 —— 反思失败回退 D8 语义
+                logger.warning("LLM 反思失败，回退原查询重试：%s", exc)
+
         sink.emit(
             AgentEvent(
                 EVENT_NODE_FINISHED,
                 {"node": "verifier", "gaps": len(gaps), "conflicts": len(conflicts)},
             )
         )
-        return {"gaps": gaps, "conflicts": conflicts}
+        return {
+            "gaps": gaps,
+            "conflicts": conflicts,
+            "learnings": learnings,
+            "rewritten": rewritten,
+        }
 
     return verify
+
+
+_REFLECT_PROMPT = """你是研究 Agent 的反思器。研究问题：{question}
+
+已查证据要点：
+{digest}
+
+以下子问题查了但没有拿到证据：
+{gaps}
+
+请输出 JSON（不要多余文字）：
+{{"learnings": ["要点，≤40字"],
+  "rewritten": [{{"q": "原子问题", "new_query": "改写后的新查询，换角度换关键词"}}]}}
+learnings 只写证据里站得住的结论；new_query 必须与原问题措辞明显不同。"""
+
+
+def _reflect(state, gaps, evidence):
+    """LLM 反思：返回 (新增 learnings, 改写查询 dict)。异常向上抛由调用方兜底。"""
+    digest = "\n".join(
+        f"- [{ev.eid}|{ev.source_type}] {ev.snippet[:110]}" for ev in evidence[:10]
+    ) or "（本轮无证据）"
+    prompt = _REFLECT_PROMPT.format(
+        question=state.get("question", "")[:120],
+        digest=digest[:2400],
+        gaps="\n".join("- " + g[:60] for g in gaps),
+    )
+    import json as _json
+
+    from app.llm import invoke_with_fallback
+
+    _, resp = invoke_with_fallback([{"role": "user", "content": prompt}])
+    # 不能用 planner.extract_json：它钉死 sub_questions 形状，反思载荷会被
+    # 静默丢成 None（实测踩过）——这里做自己的花括号抢救
+    m = re.search(r"\{.*\}", str(resp.content), re.DOTALL)
+    try:
+        data = _json.loads(m.group(0)) if m else {}
+    except ValueError:
+        data = {}
+    learned = [str(x)[:48] for x in (data.get("learnings") or []) if str(x).strip()][:5]
+    rewritten: dict[str, str] = {}
+    for item in data.get("rewritten") or []:
+        if isinstance(item, dict) and item.get("q") and item.get("new_query"):
+            rewritten[str(item["q"])] = str(item["new_query"])[:80]
+    return learned, rewritten
 
 
 def make_synth_node(sink: EventSink):

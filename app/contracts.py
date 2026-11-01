@@ -20,6 +20,9 @@ EVENT_REPORT_DELTA = "report_delta"
 # 流式断流且已发出过 delta 时发：UI 收到即清空已呈现的残文，防止降级路径的
 # 全文拼在半截后面（评审 P1-6）。只在 synthesizer 降级边界发，其他节点禁用。
 EVENT_REPORT_RESET = "report_reset"
+# Agent 化升级（v2.3）：反思/规划/压缩的"思考链"事件——payload {stage, text}，
+# UI 据此渲染思考链时间线；三端同步（网关透传、Streamlit 事件流、静态前端时间线）
+EVENT_THOUGHT = "thought"
 EVENT_WARNING = "warning"
 EVENT_DONE = "done"
 EVENT_ERROR = "error"

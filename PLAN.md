@@ -257,3 +257,12 @@ MIT（最大传播）vs PolyForm Strict（与老项目一致）；新仓库依�
 | 17 | `_teardown` fire-and-forget aclose（初始化失败路径泄漏） | P3 | ✅ 已随 #1 修复 |
 | 18 | estimate_tokens 粗估偏差 30%+ | P3 | ⏸ 维持粗估口径（注释已声明）；D9 Langfuse 接真实 usage 后替换 |
 | 19 | planner/synthesizer 降级循环与 `invoke_with_fallback` 三处同构 | P3 | ⏸ 暂不重构：LLM 路径行为等价性离线验不了，冲刺期不动 |
+
+## 十二、v2.3 Agent 化升级（2026-11-01，用户质询"为什么没有循环/思考链/记忆/压缩"后补齐）
+
+| 能力 | 实现 | 验收 |
+|---|---|---|
+| LLM 反思回路 | verifier 有 gap 时 LLM 反思→learnings 沉淀 + gap 查询改写（REFLECT_MODE=llm，off 回退 D8 重试语义）；retriever 用改写查询重试=循环真转 | 反思开关测试 + 改写消费测试 |
+| 思考链可见 | 契约 v1.1 +EVENT_THOUGHT{stage,text}（plan/memory/reflect/compress 四阶段），三端同步（网关透传/Streamlit 事件流/静态前端时间线） | 浏览器实测时间线呈现 |
+| 跨 run 记忆 | app/memory.py：研究沉淀落 data/memory/runs.jsonl（gitignored），planner 前按 bigram 重叠召回 ≤3 条注入（标注"勿照抄"防污染） | 二次运行实测"召回 1 条过往研究记忆" |
+| 上下文压缩 | 证据超预算：被裁内容 LLM 摘要（无 eid 禁引用，对账拦幻觉）注入 prompt；LLM 不可用退纯截断 | 压缩进 prompt 测试 |

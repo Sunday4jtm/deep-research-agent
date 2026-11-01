@@ -13,6 +13,9 @@ os.environ["PROVIDER_MODE"] = "fake"
 # planner 同理：测试永远走确定性模板，LLM 版规划器由 slow 测试单独实调验证
 os.environ["PLANNER_MODE"] = "template"
 os.environ["SYNTH_MODE"] = "template"
+# v2.3：反思（LLM）与跨 run 记忆在测试里全关——确定性 + 不污染 data/memory/
+os.environ["REFLECT_MODE"] = "off"
+os.environ["MEMORY_ENABLED"] = ""
 
 
 @pytest.fixture(autouse=True)

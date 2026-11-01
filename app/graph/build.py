@@ -84,4 +84,13 @@ def run_research(question: str, focus: str = "", sink: EventSink | None = None) 
         # 追踪冲刷放 finally：崩溃路径的 trace（含 error 现场）同样要落云，
         # 排障时最值钱的恰恰是失败 trace（D9）
         flush_tracing()
+    # 跨 run 记忆沉淀（v2.3）：learnings + 来源清单落 data/memory/（gitignored）
+    from app import memory as app_memory
+
+    app_memory.append_run(
+        question,
+        list(final.get("learnings", [])),
+        [ev.locator for ev in final.get("evidence", [])],
+        len(str(final.get("report", ""))),
+    )
     return dict(final)

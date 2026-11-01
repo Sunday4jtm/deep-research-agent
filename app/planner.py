@@ -83,12 +83,22 @@ def template_plan(question: str) -> list[str]:
     return [question.strip()]
 
 
-def plan_subquestions(question: str, focus: str = "") -> tuple[list[str], dict[str, int]]:
-    """入口：永不向上抛异常（③兜底保证）。返回 (子问题, token_usage)。"""
+def plan_subquestions(
+    question: str, focus: str = "", memories: list[dict] | None = None
+) -> tuple[list[str], dict[str, int]]:
+    """入口：永不向上抛异常（③兜底保证）。返回 (子问题, token_usage)。
+
+    memories（v2.3）：跨 run 记忆召回结果，注入 prompt 作参考素材——
+    明确标注"仅供参考勿照抄"，防止旧研究结论污染新拆解。
+    """
     chain = _model_chain()
     user_text = f"研究问题：{question}"
     if focus:
         user_text += f"\n用户补充的关注点：{focus}（拆解时覆盖这个角度）"
+    for m in memories or []:
+        prev_q = m.get("question", "")[:60]
+        prev_l = "；".join(m.get("learnings", [])[:3])
+        user_text += f"\n[过往研究记忆，仅供参考勿照抄] 「{prev_q}」的沉淀：{prev_l}"
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": user_text},

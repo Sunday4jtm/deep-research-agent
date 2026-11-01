@@ -97,6 +97,12 @@
   #stats div span { font-size: 11.5px; color: var(--muted); }
   #stats .bad b { color: var(--err); }
 
+  /* 思考链时间线：规划/反思/压缩的阶段文本 */
+  #thoughts { border-left: 2px solid var(--border); padding-left: 14px; margin: 4px 0 2px; }
+  .thought { font-size: 12.5px; color: var(--text-2); padding: 3px 0; }
+  .thought b { color: var(--accent); font-family: var(--mono); font-size: 11px;
+               letter-spacing: .06em; margin-right: 8px; }
+
   /* 事件日志 */
   details { margin-top: 30px; border-top: 1px solid var(--border-soft); padding-top: 14px; }
   summary { cursor: pointer; font-size: 12.5px; color: var(--muted); }
@@ -134,6 +140,7 @@
     <div class="status"><i class="dot run" id="dot"></i><span id="statusText">连接网关…</span>
       <span class="round" id="roundText"></span></div>
     <div class="bar"><i id="barFill" style="width: 4%"></i></div>
+    <div id="thoughts"></div>
     <div class="sect" id="srcSect" style="display:none">取证来源</div>
     <div id="sources"></div>
     <div id="reportCard"><div id="report"></div></div>
@@ -204,7 +211,7 @@ async function start() {
   $("sources").innerHTML = ""; $("report").innerHTML = ""; $("log").innerHTML = "";
   $("stats").innerHTML = ""; $("stats").style.display = "none";
   $("reportCard").style.display = "none"; $("errbox").style.display = "none";
-  $("srcSect").style.display = "none";
+  $("srcSect").style.display = "none"; $("thoughts").innerHTML = "";
   setDot("run", "连接网关…");
   $("barFill").style.width = "4%";
 
@@ -268,6 +275,14 @@ async function start() {
         $("barFill").style.width = "82%"; break;
       case "report_reset":
         text = ""; $("report").innerHTML = ""; break;
+      case "thought": {
+        $("thoughts").style.display = "block";
+        const d = document.createElement("div");
+        d.className = "thought";
+        d.innerHTML = "<b>" + (p.stage || "think") + "</b>" + (p.text || "");
+        $("thoughts").appendChild(d);
+        break;
+      }
       case "warning":
         break;
       case "error":

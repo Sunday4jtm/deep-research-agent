@@ -25,3 +25,6 @@ dist/
 
 # D10 评测运行产物（jsonl/md，随跑随生成）
 eval/results/
+
+# v2.3 跨 run 记忆（本机数据）
+data/memory/

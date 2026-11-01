@@ -20,6 +20,7 @@ from app.config import get_settings
 from app.contracts import (
     EVENT_REPORT_DELTA,
     EVENT_REPORT_RESET,
+    EVENT_THOUGHT,
     EVENT_WARNING,
     AgentEvent,
     EventSink,
@@ -73,6 +74,67 @@ def _evidence_within_budget(
     return kept, len(evidence) - len(kept)
 
 
+def _within_budget_or_compress(
+    evidence: list[Evidence], sink: EventSink
+) -> tuple[list[Evidence], int, str]:
+    """证据预算的两级策略（v2.3 上下文压缩）：先硬截断；被裁的量够大且
+    LLM 可用时，把被裁内容压缩成一段摘要作为"补充素材"注入 prompt——
+    摘要无 eid，模型被明确禁止引用它（引用对账天然拦截幻觉）。
+    LLM 不可用/失败 → 退回纯截断（D5 语义），永不因压缩挂掉。"""
+    kept, dropped = _evidence_within_budget(
+        evidence, get_settings().evidence_char_budget
+    )
+    if not dropped:
+        return kept, 0, ""
+    dropped_items = evidence[len(kept):]
+    if len(dropped_items) < 2:
+        sink.emit(
+            AgentEvent(
+                EVENT_WARNING,
+                {
+                    "where": "synthesizer",
+                    "error": f"证据超出字符预算，已裁剪 {dropped} 条"
+                    f"（budget={get_settings().evidence_char_budget}）",
+                },
+            )
+        )
+        return kept, dropped, ""
+
+    chain = _model_chain()  # 模块级名字：测试桩/配置覆盖才能生效（局部 import 会绕过）
+    if not chain:
+        return kept, dropped, ""
+    raw = " ".join(ev.snippet[:400] for ev in dropped_items)[:6000]
+    provider, base_url, model, api_key = chain[0]
+    try:
+        resp = _build_chat(provider, base_url, model, api_key, 0.0).invoke(
+            [
+                (
+                    "user",
+                    "把下面这些被预算裁掉的检索要点压缩成 ≤250 字的要点清单，"
+                    "保留所有数字、结论与来源名，不要任何开场白：\n\n" + raw,
+                )
+            ],
+            config={"callbacks": tracing_callbacks()},
+        )
+        summary = str(resp.content).strip()
+        if not summary:
+            return kept, dropped, ""
+        sink.emit(
+            AgentEvent(
+                EVENT_THOUGHT,
+                {
+                    "stage": "compress",
+                    "text": f"{dropped} 条超预算证据已压缩为 {len(summary)} 字摘要"
+                    "（无编号，禁止引用）",
+                },
+            )
+        )
+        return kept, dropped, summary
+    except Exception as exc:  # noqa: BLE001 —— 压缩失败退纯截断
+        logger.warning("证据压缩失败，退回纯截断：%s", exc)
+        return kept, dropped, ""
+
+
 def _format_evidence(evidence: list[Evidence]) -> str:
     blocks = []
     for ev in evidence:
@@ -101,10 +163,14 @@ def _user_prompt(state: dict, evidence: list[Evidence]) -> str:
     return "\n\n".join(parts)
 
 
-def _messages(state: dict, evidence: list[Evidence]) -> list:
+def _messages(state: dict, evidence: list[Evidence], compressed: str = "") -> list:
+    user = _user_prompt(state, evidence)
+    if compressed:
+        # 压缩摘要无 eid：明确禁止引用（引用对账会拦幻觉），仅作背景素材
+        user += ("\n\n[被预算裁掉证据的压缩摘要——仅作背景，禁止引用]\n" + compressed)
     return [
         ("system", SYSTEM_PROMPT),
-        ("user", _user_prompt(state, evidence)),
+        ("user", user),
     ]
 
 
@@ -140,21 +206,10 @@ def _finalize(
 def synthesize_report(state: dict, sink: EventSink) -> tuple[str, dict[str, int], dict]:
     """入口：永不抛异常（③兜底保证）。返回 (报告, token_usage, citation_report)。"""
     evidence: list[Evidence] = state.get("evidence", [])
-    kept, dropped = _evidence_within_budget(
-        evidence, get_settings().evidence_char_budget
+    kept, dropped_n, compressed = _within_budget_or_compress(
+        evidence, sink
     )
     evidence_ids = {ev.eid for ev in kept}
-    if dropped:
-        sink.emit(
-            AgentEvent(
-                EVENT_WARNING,
-                {
-                    "where": "synthesizer",
-                    "error": f"证据超出字符预算，已裁剪 {dropped} 条"
-                    f"（budget={get_settings().evidence_char_budget}）",
-                },
-            )
-        )
     chain = _model_chain()
     if not chain:
         logger.warning("synthesizer：未配置任何模型 Key，走模板兜底")
@@ -166,7 +221,7 @@ def synthesize_report(state: dict, sink: EventSink) -> tuple[str, dict[str, int]
             llm = _build_chat(provider, base_url, model, api_key, TEMPERATURE)
             chunks: list[str] = []
             for chunk in llm.stream(
-                _messages(state, kept), config={"callbacks": tracing_callbacks()}
+                _messages(state, kept, compressed), config={"callbacks": tracing_callbacks()}
             ):
                 text = str(chunk.content) if chunk.content else ""
                 if text:
@@ -191,7 +246,10 @@ def synthesize_report(state: dict, sink: EventSink) -> tuple[str, dict[str, int]
     for provider, base_url, model, api_key in chain:
         try:
             llm = _build_chat(provider, base_url, model, api_key, TEMPERATURE)
-            resp = llm.invoke(_messages(state, kept), config={"callbacks": tracing_callbacks()})
+            resp = llm.invoke(
+                _messages(state, kept, compressed),
+                config={"callbacks": tracing_callbacks()},
+            )
             report = str(resp.content).strip()
             if report:
                 _emit_delta(sink, report)

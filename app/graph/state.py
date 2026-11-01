@@ -20,7 +20,8 @@ class ResearchState(TypedDict, total=False):
     focus: str                    # 用户可选补充说明（简化版 research brief）
     sub_questions: list[str]
     attempted_queries: list[str]  # 已提交过的查询：跨轮去重的依据
-    learnings: list[str]          # 每轮沉淀要点，喂给下一轮查询生成（D10 启用）
+    learnings: list[str]          # 每轮反思沉淀（v2.3 反思回路产出，喂下一轮反思与报告）
+    rewritten: dict[str, str]     # gap 子问题 → 改写后的新查询（v2.3，循环真转的关键）
     evidence: list[Evidence]
     subq_evidence: dict[str, list[str]]  # 子问题 → 证据编号列表
     conflicts: list[dict[str, str]]      # KB vs 公网冲突（D8 填充）
