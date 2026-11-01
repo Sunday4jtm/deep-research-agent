@@ -40,6 +40,8 @@ class Settings:
     max_rounds: int          # 检索回环熔断（depth）
     breadth: int             # 每轮子问题检索上限（借鉴 dzhng/deep-research）
     evidence_char_budget: int  # 证据总字符预算（双熔断之二）
+    agent_mode: str         # research（流水线）| react（ReAct 自主循环，v2.4）
+    agent_max_steps: int    # ReAct 步数熔断
     reflect_mode: str       # llm（验证后 LLM 反思：learnings+查询改写）| off（纯确定性 gap 重试）
     memory_enabled: bool    # 跨 run 记忆（data/memory/runs.jsonl，已 gitignore）
     tracing_enabled: bool    # Langfuse 追踪开关（D9；Keys 在 .env，开关独立——离线测试默认关）
@@ -84,6 +86,8 @@ def get_settings() -> Settings:
         max_rounds=_env_int("MAX_ROUNDS", 3),
         breadth=_env_int("BREADTH", 3),
         evidence_char_budget=_env_int("EVIDENCE_CHAR_BUDGET", 12000),
+        agent_mode=_env("AGENT_MODE", "research"),
+        agent_max_steps=int(_env("AGENT_MAX_STEPS", "10")),
         reflect_mode=_env("REFLECT_MODE", "llm"),
         memory_enabled=_env("MEMORY_ENABLED", "1") in {"1", "true", "yes", "on"},
         tracing_enabled=_env("LANGFUSE_ENABLED") in {"1", "true", "yes", "on"},

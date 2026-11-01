@@ -62,6 +62,7 @@ class ResearchRequest(BaseModel):
     # （对抗性审查补；超出即 422，客户端可见）
     question: str = Field(max_length=2000)
     focus: str = Field(default="", max_length=500)
+    agent_mode: str = Field(default="", max_length=16)  # research | react（空=用配置）
 
 
 @app.get("/api/health")
@@ -70,7 +71,7 @@ def health() -> dict:
     return {"status": "ok"}
 
 
-def _run_in_thread(question: str, focus: str, q: queue.Queue[AgentEvent]) -> None:
+def _run_in_thread(question: str, focus: str, q: queue.Queue[AgentEvent], agent_mode: str) -> None:
     """研究线程主体。
 
     这里刻意【不】再补 error 事件：run_research 的兜底（build.py）在图失败时
@@ -79,7 +80,7 @@ def _run_in_thread(question: str, focus: str, q: queue.Queue[AgentEvent]) -> Non
     极端情况（异常发生在任何契约事件之前）由下面 stream() 的
     "线程死了且队列为空"兜底帧接住。"""
     try:
-        run_research(question, focus, sink=_ThreadSafeSink(q))
+        run_research(question, focus, sink=_ThreadSafeSink(q), agent_mode=agent_mode or None)
     except Exception:  # noqa: BLE001 —— 网关兜底边界
         logger.exception("研究线程异常（契约 error 事件已由 build 层入队）")
 
@@ -97,7 +98,9 @@ def research(req: ResearchRequest) -> StreamingResponse:
 
     q: queue.Queue[AgentEvent] = queue.Queue()
     thread = threading.Thread(
-        target=_run_in_thread, args=(question, req.focus.strip(), q), daemon=True
+        target=_run_in_thread,
+        args=(question, req.focus.strip(), q, req.agent_mode),
+        daemon=True,
     )
     thread.start()
 

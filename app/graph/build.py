@@ -50,7 +50,12 @@ def build_research_app(sink: EventSink):
     return graph.compile()
 
 
-def run_research(question: str, focus: str = "", sink: EventSink | None = None) -> dict:
+def run_research(
+    question: str,
+    focus: str = "",
+    sink: EventSink | None = None,
+    agent_mode: str | None = None,
+) -> dict:
     """同步入口：一次研究 = 一个完整的图执行。返回最终 State。
 
     图执行任何异常都必须先以 error 事件收尾再向上抛：调用方跑在后台线程里
@@ -64,12 +69,24 @@ def run_research(question: str, focus: str = "", sink: EventSink | None = None) 
     active_sink.emit(
         AgentEvent(
             EVENT_RESEARCH_STARTED,
-            {"question": question, "provider_mode": get_settings().provider_mode},
+            {
+                "question": question,
+                "provider_mode": get_settings().provider_mode,
+                "agent_mode": agent_mode or get_settings().agent_mode,
+            },
         )
     )
     try:
-        app = build_research_app(active_sink)
-        final = app.invoke(
+        mode = agent_mode or get_settings().agent_mode
+        if mode == "react":
+            # ReAct 自主循环（v2.4）：LLM 驱动工具调用，返回同构 State——
+            # 下游（citation/前端/记忆）零感知范式差异
+            from app.agent_loop import run_react_research
+
+            final = run_react_research(question, focus, active_sink)
+        else:
+            app = build_research_app(active_sink)
+            final = app.invoke(
             {"question": question, "focus": focus}, config={"recursion_limit": 50}
         )
     except Exception as exc:

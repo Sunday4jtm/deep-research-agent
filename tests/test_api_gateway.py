@@ -31,7 +31,7 @@ def gateway(monkeypatch: pytest.MonkeyPatch):
     import api.main as api_main
 
     def install(script: list[AgentEvent] | Exception) -> None:
-        def fake_research(question: str, focus: str = "", sink=None) -> dict:
+        def fake_research(question: str, focus: str = "", sink=None, agent_mode=None) -> dict:
             sink.emit(AgentEvent(EVENT_RESEARCH_STARTED, {"question": question}))
             if isinstance(script, Exception):
                 # 真实 run_research 的契约：崩前自己发 error 事件再 raise（build.py 兜底）
