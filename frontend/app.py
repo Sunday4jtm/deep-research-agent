@@ -47,6 +47,16 @@ _IMG_RE = re.compile(r"!\[[^\]]*\]\([^)]*\)")
 
 st.set_page_config(page_title="研知 · Deep Research Agent", page_icon="🔬", layout="wide")
 
+# 屏蔽 Streamlit 1.66 官方 "Help agents" 推广 toast：它的容器以不可见锚条
+# 拦截整页指针事件，输入框/按钮全部"点了没反应"（实机浏览器抓过，刷新后
+# 每个新会话再弹一次）。本应用不用 st.toast()，屏蔽无副作用；
+# 若未来要用 st.toast 做产品通知，删掉这段并改用"点 Don't show again"引导。
+st.markdown(
+    "<style>[data-testid='stToast'], [data-testid='stToastContainer'],"
+    " div[class*='stToast'] { display: none !important; }</style>",
+    unsafe_allow_html=True,
+)
+
 
 class QueueSink:
     """把图的事件流推进线程安全队列，UI 端轮询消费（跨线程的事件契约）。"""
@@ -117,6 +127,7 @@ question = st.text_input(
     placeholder="例：LangGraph 和手写 Agent 循环哪个更适合生产？",
 )
 focus = st.text_input("关注点（可选）", placeholder="例：本地 CPU 部署")
+st.caption("⌨️ 输入后按 **Enter**（或点一下页面别处）提交文字，按钮才会解锁；再点「开始研究」。")
 running = st.session_state.thread is not None and st.session_state.thread.is_alive()
 if st.button("开始研究", type="primary", disabled=running or not question.strip()):
     st.session_state.sink = QueueSink()
@@ -137,15 +148,19 @@ if st.button("开始研究", type="primary", disabled=running or not question.st
     st.session_state.thread.start()
 
 st.divider()
-status_ph = st.empty()
-mode_ph = st.empty()
-report_ph = st.empty()
-side_ph = st.container()
-
-
 @st.fragment(run_every="1s")
 def live_panel() -> None:
-    """每秒取空事件队列：报告逐字增长，过程事件即时可见。"""
+    """每秒取空事件队列：报告逐字增长，过程事件即时可见。
+
+    三个容器（status/mode/report/side）必须在 fragment 【内部】创建：
+    Streamlit 1.66 起 fragment 写外部容器直接抛
+    StreamlitInvalidLayoutContextError（实机红条，浏览器实测抓到）。
+    数据全部存 session_state，fragment 每秒从 state 重绘，无跨域写。"""
+    status_ph = st.empty()
+    mode_ph = st.empty()
+    report_ph = st.empty()
+    side_ph = st.container()
+
     sink = st.session_state.sink
     if sink is None:
         return
