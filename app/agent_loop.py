@@ -215,7 +215,15 @@ class _ReactLoop:
         # done 必须在这里发——否则网关兜底会误判"线程死亡"，前端也永远
         # 拿不到报告（实机踩过：研究完成却显示"线程异常退出"）
         self.sink.emit(AgentEvent(EVENT_REPORT_DELTA, {"text": report}))
-        self.sink.emit(AgentEvent(EVENT_DONE, {"citation_report": self._cite(report)}))
+        self.sink.emit(
+            AgentEvent(
+                EVENT_DONE,
+                {
+                    "citation_report": self._cite(report),
+                    "token_usage": {"agent": estimate_tokens(report) * self.steps},
+                },
+            )
+        )
         return {
             "question": self.question,
             "focus": self.focus,

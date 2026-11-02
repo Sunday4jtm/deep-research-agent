@@ -452,10 +452,15 @@ def make_synth_node(sink: EventSink):
             )
             sink.emit(AgentEvent(EVENT_REPORT_DELTA, {"text": report}))
         sink.emit(AgentEvent(EVENT_NODE_FINISHED, {"node": "synthesizer"}))
-        # done 必须是终止事件：三端 UI 以它判定"研究结束"
-        sink.emit(AgentEvent(EVENT_DONE, {"citation_report": citation}))
         merged_usage = dict(state.get("token_usage", {}))
         merged_usage.update(usage)
+        # done 必须是终止事件：三端 UI 以它判定"研究结束"；
+        # token_usage 随 done 送达（D5 验收项：UI 展示成本）
+        sink.emit(
+            AgentEvent(
+                EVENT_DONE, {"citation_report": citation, "token_usage": merged_usage}
+            )
+        )
         return {
             "report": report,
             "citation_report": citation,

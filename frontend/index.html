@@ -309,6 +309,8 @@ async function start() {
         setDot("err", "失败 · " + (p.msg || "未知错误")); break;
       case "done": {
         const c = p.citation_report || {};
+        const tu = p.token_usage || {};
+        window.__tokens = Object.values(tu).reduce((a, b) => a + (b || 0), 0);
         const bad = (c.unmapped || []).length > 0;
         $("stats").style.display = "flex";
         $("stats").innerHTML =
@@ -316,7 +318,9 @@ async function start() {
           `<div><b>${c.refs_unique ?? "-"}</b><span>去重编号</span></div>` +
           `<div><b>${c.mapped ?? "-"}</b><span>可映射</span></div>` +
           `<div><b>${c.evidence_total ?? "-"}</b><span>证据</span></div>` +
-          `<div${bad ? ' class="bad"' : ""}><b>${bad ? c.unmapped.length + " 个" : "全部映射"}</b><span>对账结论</span></div>`;
+          `<div${bad ? ' class="bad"' : ""}><b>${bad ? c.unmapped.length + " 个" : "全部映射"}</b><span>对账结论</span></div>` +
+          `<div><b>${window.__tokens ?? "-"}</b><span>tokens（粗估）</span></div>` +
+          `<div><b>${window.__tokens ?? "-"}</b><span>tokens（粗估）</span></div>`;
         setDot("ok", "研究完成");
         $("barFill").style.width = "100%";
         $("roundText").textContent = ""; break;

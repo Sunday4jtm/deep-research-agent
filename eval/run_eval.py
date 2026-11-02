@@ -181,13 +181,19 @@ def main() -> None:
         f"PROVIDER_MODE={get_settings().provider_mode}",
         "- N/A 不进均值；防御类指标（冲突披露/注入存活）为夹具题确定性结果",
         "",
-        "| qid | kind | mode#rep | wall | round | 证据 | 存在率 | 覆盖 | 冲突 | 注入 |",
-        "|---|---|---|---|---|---|---|---|---|---|",
+        "| qid | kind | mode#rep | wall | p50/p95 | round | 证据 | 存在率 | 覆盖 | 冲突 | 注入 |",
+        "|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for r in all_runs:
+        lat = r.get("latency") or {}
+        lat_s = (
+            f"{lat.get('p50', 0) * 1000:.0f}/{lat.get('p95', 0) * 1000:.0f}"
+            if lat
+            else "N/A"
+        )
         lines.append(
             f"| {r['qid']} | {r['kind']} | {r['mode']}#{r['repeat'] + 1} "
-            f"| {r['wall_seconds']} | {r['round']} | {r['evidence_count']} "
+            f"| {r['wall_seconds']} | {lat_s} | {r['round']} | {r['evidence_count']} "
             f"| {_fmt(r['citation_existence'])} | {_fmt(r['coverage'])} "
             f"| {_fmt(r['conflict_disclosure'])} | {_fmt(r['injection_survived'])} |"
         )

@@ -117,6 +117,9 @@ python -m eval.run_eval --modes single --repeat 1 --skip-judge   # 快速基线
 
 - 新仓库**零 import** 老仓库；唯一运行时连接 = MCP stdio（Server A=web、
   Server B=kb），HTTP 直连老仓库 REST 仅作 direct 模式兜底；
+- **依赖锚点**：姊妹仓库 `ai-study-supervisor` main @ `7c1af29`（v3.3.0，
+  含 `mcp/` Server A/B 与 `GET /api/kb/search`）；MCP 改造前备份 tag
+  `pre-mcp-backup-20261031`；
 - MCP Server 代码在姊妹仓库 `mcp/` 目录，随其许可约定；
 - 本仓库以 **MIT** 发布（见 [LICENSE](LICENSE)）。
 
