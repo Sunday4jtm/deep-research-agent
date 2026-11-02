@@ -46,16 +46,24 @@ def run_one(q, mode: str) -> dict:
     """
     original_rounds = os.environ.get("MAX_ROUNDS", "")
     original_planner = os.environ.get("PLANNER_MODE", "")
+    original_ds = os.environ.get("DEEPSEEK_API_KEY", "")
     os.environ["MAX_ROUNDS"] = "1" if mode == "single" else "3"
     if q.kind in FIXTURE_KINDS:
         # 夹具题整条链路钉死：planner 也走 template（单子问题直通）——
         # LLM 拆解出的子问题措辞不可控，剧本证据匹配不上，指标就不是同一把尺子
         os.environ["PLANNER_MODE"] = "template"
+    # 免费保障（用户指示 2026-11-02）：评测全程禁用 DeepSeek（计费），
+    # chat 自动落到商汤公测免费档；恢复后仅影响本进程，.env 原样
+    os.environ.pop("DEEPSEEK_API_KEY", None)
     get_settings.cache_clear()
     try:
         return _run_one_inner(q, mode)
     finally:
-        for name, original in (("MAX_ROUNDS", original_rounds), ("PLANNER_MODE", original_planner)):
+        for name, original in (
+            ("MAX_ROUNDS", original_rounds),
+            ("PLANNER_MODE", original_planner),
+            ("DEEPSEEK_API_KEY", original_ds),
+        ):
             if original:
                 os.environ[name] = original
             else:
@@ -113,11 +121,17 @@ def main() -> None:
     parser.add_argument("--modes", default="single,multi")
     parser.add_argument("--repeat", type=int, default=2)
     parser.add_argument("--limit", type=int, default=0, help="只跑前 N 题（0=全部）")
+    parser.add_argument(
+        "--kinds", default="", help="只跑指定类型（逗号分隔，如 private,conflict,injection）"
+    )
     parser.add_argument("--out", default="eval/results")
     parser.add_argument("--skip-judge", action="store_true", help="跳过 LLM 裁判（省时）")
     args = parser.parse_args()
 
     questions = QUESTIONS[: args.limit or None]
+    if args.kinds:
+        wanted = {k.strip() for k in args.kinds.split(",")}
+        questions = [q for q in questions if q.kind in wanted]
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
