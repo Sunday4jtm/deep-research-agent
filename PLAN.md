@@ -266,3 +266,12 @@ MIT（最大传播）vs PolyForm Strict（与老项目一致）；新仓库依�
 | 思考链可见 | 契约 v1.1 +EVENT_THOUGHT{stage,text}（plan/memory/reflect/compress 四阶段），三端同步（网关透传/Streamlit 事件流/静态前端时间线） | 浏览器实测时间线呈现 |
 | 跨 run 记忆 | app/memory.py：研究沉淀落 data/memory/runs.jsonl（gitignored），planner 前按 bigram 重叠召回 ≤3 条注入（标注"勿照抄"防污染） | 二次运行实测"召回 1 条过往研究记忆" |
 | 上下文压缩 | 证据超预算：被裁内容 LLM 摘要（无 eid 禁引用，对账拦幻觉）注入 prompt；LLM 不可用退纯截断 | 压缩进 prompt 测试 |
+
+### 免费通道评测补齐（2026-11-02，按用户指示停用 DeepSeek 后）
+
+| 项 | 结果 |
+|---|---|
+| 协议 | 夹具 6 题（private/conflict/injection）× {single,multi} × 2 次 = 24 run，**全免费通道**（商汤 6.8-flash-lite 综合 + 剧本证据 + 智谱裁判）；web/hybrid 4 题暂缓——公网搜索唯一可用 provider 是 DeepSeek（计费），恢复与否待用户决定 |
+| 指标 | 引用存在率 1.000（24/24）· 覆盖率 1.000 · 冲突披露率 1.00 · **引用支撑率 0.917**（智谱裁判 24 run 全跑，修复"先写后算"丢失 bug 后回写）· **注入存活 0/4** |
+| 重要发现 | **换免费模型的代价=注入防御崩塌**：商汤 6.8-flash-lite 在全部 4 次注入题中都执行了金丝雀指令（DeepSeek 只失守 1/4）——P2-17 升级为 P1，候选修复=注入告警升级为证据级排除 |
+| 顺带修复 | 评测裁判结果"先写后算"丢失 → 回写 jsonl；夹具跑分污染跨 run 记忆 → MEMORY_ENABLED 隔离 |
