@@ -47,14 +47,17 @@ def run_one(q, mode: str) -> dict:
     original_rounds = os.environ.get("MAX_ROUNDS", "")
     original_planner = os.environ.get("PLANNER_MODE", "")
     original_ds = os.environ.get("DEEPSEEK_API_KEY", "")
+    original_mem = os.environ.get("MEMORY_ENABLED", "")
     os.environ["MAX_ROUNDS"] = "1" if mode == "single" else "3"
     if q.kind in FIXTURE_KINDS:
         # 夹具题整条链路钉死：planner 也走 template（单子问题直通）——
         # LLM 拆解出的子问题措辞不可控，剧本证据匹配不上，指标就不是同一把尺子
         os.environ["PLANNER_MODE"] = "template"
     # 免费保障（用户指示 2026-11-02）：评测全程禁用 DeepSeek（计费），
-    # chat 自动落到商汤公测免费档；恢复后仅影响本进程，.env 原样
+    # chat 自动落到商汤公测免费档；恢复后仅影响本进程，.env 原样。
+    # 夹具跑分也不得写跨 run 记忆（MEMORY_ENABLED 隔离），否则污染真实研究的召回
     os.environ.pop("DEEPSEEK_API_KEY", None)
+    os.environ.pop("MEMORY_ENABLED", None)
     get_settings.cache_clear()
     try:
         return _run_one_inner(q, mode)
@@ -63,6 +66,7 @@ def run_one(q, mode: str) -> dict:
             ("MAX_ROUNDS", original_rounds),
             ("PLANNER_MODE", original_planner),
             ("DEEPSEEK_API_KEY", original_ds),
+            ("MEMORY_ENABLED", original_mem),
         ):
             if original:
                 os.environ[name] = original
@@ -161,6 +165,10 @@ def main() -> None:
         for run in all_runs:
             pairs = sample_citation_pairs(run["report"], run["evidence_pairs"])
             run["support_rate"] = judge_support(pairs) if pairs else None
+        # 裁判结果回写 jsonl：run 循环先写文件、裁判后算——不回写就丢了（实测踩过）
+        with jsonl_path.open("w", encoding="utf-8") as f:
+            for run in all_runs:
+                f.write(json.dumps(run, ensure_ascii=False) + "\n")
 
     # ---- 对照表（markdown）----
     def _fmt(v) -> str:
