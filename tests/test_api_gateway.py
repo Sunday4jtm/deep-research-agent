@@ -102,6 +102,15 @@ def test_空问题返回400(gateway):
     assert resp.status_code == 400
 
 
+def test_agent_mode非法值422(gateway):
+    """枚举校验（评审 P3）：垃圾值此前静默按流水线跑——评测对照依赖
+    「跑的到底是什么模式」语义精确，非法值必须客户端可见地失败。"""
+    client, _ = gateway
+    resp = client.post("/api/research", json={"question": "q", "agent_mode": "agentic"})
+
+    assert resp.status_code == 422
+
+
 def test_health探活(gateway):
     client, _ = gateway
     resp = client.get("/api/health")

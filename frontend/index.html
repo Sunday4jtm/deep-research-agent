@@ -309,8 +309,9 @@ async function start() {
         srcN++;
         const el = document.createElement("span");
         el.className = "src " + p.source_type;
-        // 事件 payload 来自外部检索结果，统一过 esc 再进 innerHTML（同报告渲染口径）
-        el.innerHTML = "<i></i><span class=\"eid\">" + p.eid + "</span>" +
+        // 事件 payload 来自外部检索结果，统一过 esc 再进 innerHTML（同报告渲染口径）——
+        // eid 也不豁免：今天由服务端生成，契约哪天带上来源信息就是注入面（评审 P2）
+        el.innerHTML = "<i></i><span class=\"eid\">" + esc(String(p.eid || "")) + "</span>" +
           esc(String(p.title || p.locator || "").slice(0, 60));
         el.title = p.locator || "";
         $("sources").appendChild(el);
@@ -338,7 +339,9 @@ async function start() {
         const c = p.citation_report || {};
         const tu = p.token_usage || {};
         const tokens = Object.values(tu).reduce((a, b) => a + (b || 0), 0);
-        const unmapped = (c.unmapped || []).length;
+        // unmapped_total 是契约字段（完整计数）；旧 payload 无此字段时退回列表长度。
+        // 旧实现拿 len(截断到10的列表) 当计数：幻觉 15 个编号显示 10（评审 P1）
+        const unmapped = c.unmapped_total !== undefined ? c.unmapped_total : (c.unmapped || []).length;
         let line = `<b>${c.refs_total ?? "-"}</b> 引用 · <b>${c.refs_unique ?? "-"}</b> 去重 · ` +
           `<b>${c.mapped ?? "-"}</b> 映射 · <b>${c.evidence_total ?? "-"}</b> 证据 · ` +
           `<b>${fmtK(tokens)}</b> tok`;

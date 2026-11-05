@@ -27,6 +27,7 @@ import logging
 import queue
 import threading
 from pathlib import Path
+from typing import Literal
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
@@ -62,7 +63,9 @@ class ResearchRequest(BaseModel):
     # （对抗性审查补；超出即 422，客户端可见）
     question: str = Field(max_length=2000)
     focus: str = Field(default="", max_length=500)
-    agent_mode: str = Field(default="", max_length=16)  # research | react（空=用配置）
+    # 枚举校验（评审 P3）：任意垃圾值此前静默按流水线跑——评测对照依赖
+    # 「跑的到底是什么模式」语义精确，非法值 422 客户端可见
+    agent_mode: Literal["", "research", "react"] = ""
 
 
 @app.get("/api/health")

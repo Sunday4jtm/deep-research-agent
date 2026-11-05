@@ -149,17 +149,19 @@ class QueueSink:
         self.q.put(event)
 
 
-def _consume_gateway(question: str, focus: str, sink: QueueSink) -> None:
+def _consume_gateway(question: str, focus: str, sink: QueueSink, agent_mode: str = "") -> None:
     """SSE 客户端：把网关下发的契约事件逐帧转回 AgentEvent 推进队列。
 
     为什么逐行解析而不是引 SSE 库：协议就一行一个 `data: {json}`，
     三十行代码换零依赖，冲刺期划算。任何传输层异常都转成 EVENT_ERROR
     入队——UI 的终止逻辑只认事件，不感知传输细节（与 inline 模式对称）。
+    agent_mode 随请求透传（评审 P1：此前 Streamlit 端发不出该字段，
+    ReAct 范式在契约首个消费端不可达）。
     """
     try:
         resp = requests.post(
             f"{GATEWAY_URL}/api/research",
-            json={"question": question, "focus": focus},
+            json={"question": question, "focus": focus, "agent_mode": agent_mode},
             stream=True,
             timeout=(3, None),  # 读超时必须放开：研究是分钟级长流
         )
@@ -197,6 +199,7 @@ for key, default in {
     "round_n": 0,
     "events": [],
     "citation": None,
+    "token_usage": None,
 }.items():
     if key not in st.session_state:
         st.session_state[key] = default
@@ -233,6 +236,14 @@ question = st.text_input(
     placeholder="例：LangGraph 和手写 Agent 循环哪个更适合生产？",
 )
 focus = st.text_input("关注点（可选）", placeholder="例：本地 CPU 部署；重点看混合检索")
+# 范式选择（评审 P1：agent_mode 此前在 Streamlit 端不可达——"三端共用契约"
+# 的叙事在第二个消费端断在第一步）
+agent_mode = st.radio(
+    "Agent 模式",
+    ["research", "react"],
+    format_func=lambda m: "流水线（可评测）" if m == "research" else "ReAct（自主）",
+    horizontal=True,
+)
 running = st.session_state.thread is not None and st.session_state.thread.is_alive()
 if st.button("开始研究", type="primary", disabled=running or not question.strip()):
     st.session_state.sink = QueueSink()
@@ -243,12 +254,13 @@ if st.button("开始研究", type="primary", disabled=running or not question.st
     st.session_state.round_n = 0
     st.session_state.events = []
     st.session_state.citation = None
+    st.session_state.token_usage = None
     # UI_MODE 决定数据源：gateway=SSE 客户端（主路径），inline=进程内直调（砍线兜底）。
-    # 两个 target 的签名刻意对齐（question, focus, sink），切换零胶水
+    # 两个 target 的签名刻意对齐（question, focus, sink, agent_mode），切换零胶水
     target = _consume_gateway if UI_MODE == "gateway" else run_research
     st.session_state.thread = threading.Thread(
         target=target,
-        args=(question.strip(), focus.strip(), st.session_state.sink),
+        args=(question.strip(), focus.strip(), st.session_state.sink, agent_mode),
         daemon=True,
     )
     st.session_state.thread.start()
@@ -313,6 +325,7 @@ def live_panel() -> None:
         elif event.type == EVENT_DONE:
             st.session_state.done = True
             st.session_state.citation = event.payload.get("citation_report")
+            st.session_state.token_usage = event.payload.get("token_usage")
         elif event.type == EVENT_RESEARCH_STARTED:
             st.session_state.mode = str(event.payload.get("provider_mode", ""))
             st.session_state.events.append(event)
@@ -371,7 +384,20 @@ def live_panel() -> None:
     # ---- 引用对账（Linear 式数字组；unmapped=幻觉引用直接曝光）----
     if st.session_state.citation:
         c = st.session_state.citation
-        verdict = "全部映射" if not c["unmapped"] else f"未映射 {len(c['unmapped'])} 个"
+        # unmapped_total 是契约字段（完整计数）；旧 payload 无此字段时退回列表长度。
+        # 旧实现拿 len(截断到10的列表) 当计数，幻觉 15 个编号显示 10（评审 P1）
+        unmapped_n = c.get("unmapped_total", len(c.get("unmapped", [])))
+        verdict = "全部映射" if not unmapped_n else f"未映射 {unmapped_n} 个"
+        tok_total = sum(
+            v
+            for v in (st.session_state.token_usage or {}).values()
+            if isinstance(v, (int, float))
+        )
+        tok_cell = (
+            f"<div><b>{tok_total}</b><span>tok 粗估</span></div>"
+            if st.session_state.token_usage
+            else ""
+        )
         st.markdown(
             '<div class="stats">'
             f"<div><b>{c['refs_total']}</b><span>引用出现</span></div>"
@@ -379,11 +405,12 @@ def live_panel() -> None:
             f"<div><b>{c['mapped']}</b><span>可映射</span></div>"
             f"<div><b>{c['evidence_total']}</b><span>证据</span></div>"
             f"<div><b>{verdict}</b><span>对账结论</span></div>"
+            f"{tok_cell}"
             "</div>",
             unsafe_allow_html=True,
         )
-        if c["unmapped"]:
-            st.error(f"幻觉引用（编号不在证据册里）：{c['unmapped']}")
+        if unmapped_n:
+            st.error(f"幻觉引用（编号不在证据册里）：{(c.get('unmapped') or [])[:10]}")
 
     # ---- 报告文档卡（流式打字机）----
     if st.session_state.report_text:
