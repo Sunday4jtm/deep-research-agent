@@ -2,8 +2,8 @@
 现有静态研究台与 Streamlit 两端消费，Next.js 为预留端）。
 
 为什么 payload 一律是 JSON 可序列化的 dict：事件要跨 FastAPI SSE 网关出网，
-任何 dataclass 私有结构都会在序列化边界上翻车；字符串常量三端按字面匹配，
-改名 = 三端同步改（老项目"前后端契约漂移当天可见"的同款教训）。
+任何 dataclass 私有结构都会在序列化边界上翻车；字符串常量各端按字面匹配，
+改名 = 各端同步改（老项目"前后端契约漂移当天可见"的同款教训）。
 """
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-# ---- 事件类型常量：三端按字符串字面匹配，勿改名 ----
+# ---- 事件类型常量：各端按字符串字面匹配，勿改名 ----
 EVENT_RESEARCH_STARTED = "research_started"
 EVENT_NODE_STARTED = "node_started"
 EVENT_NODE_FINISHED = "node_finished"

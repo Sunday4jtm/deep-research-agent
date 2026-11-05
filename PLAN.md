@@ -190,7 +190,7 @@ MIT（最大传播）vs PolyForm Strict（与老项目一致）；新仓库依�
 
 | 风险 | 概率/影响 | 缓解 |
 |---|---|---|
-| DeepSeek search 不可用/未开通 | 高/高 | P0 真实预检；WEB_PROVIDER 切智谱/Tavily；必要时主力切智谱 |
+| DeepSeek search 不可用/未开通 | 高/高 | P0 真实预检；WEB_PROVIDER 切智谱或 none（Tavily 从未实现，已从选项移除）；必要时主力切智谱 |
 | SenseNova 公测免费档随时收紧（付费档即将上线） | 中/中 | 仅作过渡期 LLM（SENSENOVA_* 开关，Token Plan 端点 token.sensenova.cn/v1 + sensenova-6.8-flash-lite，2026-10-31 实测可用；老端点 api.sensenova.cn 对新 Key 返回 403）；DeepSeek 到位后退二线 |
 | 老仓库 MCP 改造回归 | 中高/高 | P0 基线 + feat/mcp 分支 + 833 测试门禁 + tag 备份 |
 | 内存峰值超预期 | 中/中 | 按 2.5~3.5GB 预估（ai_study 单进程 torch+chroma+bge 即 1~1.5GB）；MCP 按需启动；演示用 `next build && next start`；关 Docker Desktop |

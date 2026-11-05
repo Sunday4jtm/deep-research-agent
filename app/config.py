@@ -33,7 +33,7 @@ class Settings:
     planner_mode: str        # llm | template（离线测试强制 template，见 conftest）
     synth_mode: str          # llm | template（同上；LLM 版带引用报告+流式）
     zhipu_search_engine: str  # 智谱独立 web_search API 的引擎档位（search_std 起步）
-    web_provider: str        # deepseek | zhipu | tavily | none
+    web_provider: str        # deepseek | zhipu | none（tavily 从未实现，勿配）
     mcp_web_command: str     # MCP Server A 启动命令（stdio，空 = mcp 模式不可用）
     mcp_kb_command: str      # MCP Server B 启动命令（D7；空 = mcp 模式 kb 侧不可用）
     kb_api_base: str         # 老仓库后端地址（DirectProvider.kb 兜底走 HTTP）

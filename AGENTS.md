@@ -32,7 +32,7 @@ LangGraph 编排的多跳研究 Agent（面试作品）。私有知识库与公�
 ```
 app/config.py        全局配置（.env 加载，离线安全）
 app/llm.py           三模型链 + 回退（加锁单飞）+ token 粗估
-app/contracts.py     事件契约 v1（三端共用，改动=三端同步）
+app/contracts.py     事件契约 v1（各端共用，改动=逐端同步）
 app/planner.py       LLM 规划器（结构化输出三级降级）
 app/synthesizer.py   LLM 综合器（流式报告 + 降级链 + 注入强过滤）
 app/citation.py      citation pass（引用对账，评测指标来源）
