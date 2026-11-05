@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import logging
 import threading
-from functools import lru_cache
 
 from langchain_core.messages import BaseMessage
 from langchain_openai import ChatOpenAI
@@ -52,12 +51,26 @@ def _model_chain() -> list[tuple[str, str, str, str]]:
     return chain
 
 
-@lru_cache(maxsize=8)
+_chat_cache: dict[tuple[str, str, str, str, float], ChatOpenAI] = {}
+
+
+def _chat_cache_clear() -> None:
+    """测试隔离出口（对齐 get_settings.cache_clear 的用法纪律）。"""
+    _chat_cache.clear()
+
+
 def _build_chat(
     provider: str, base_url: str, model: str, api_key: str, temperature: float
 ) -> ChatOpenAI:
-    with _build_lock:  # 加锁单飞：防止并发首调重复初始化（老项目修过的 bug）
-        return ChatOpenAI(
+    # 锁内先查缓存再构造才是真单飞：lru_cache 只在函数【返回后】写缓存，
+    # 两个线程同时进函数体会各自拿锁各构造一次（评审实测 3 线程构造 3 次）。
+    # get_provider 是正确范式（tools/__init__.py 锁内复查），这里对齐。
+    key = (provider, base_url, model, api_key, temperature)
+    with _build_lock:
+        hit = _chat_cache.get(key)
+        if hit is not None:
+            return hit
+        client = ChatOpenAI(
             model=model,
             api_key=api_key,
             base_url=base_url,
@@ -65,6 +78,8 @@ def _build_chat(
             timeout=60,
             max_retries=1,
         )
+        _chat_cache[key] = client
+        return client
 
 
 def invoke_with_fallback(

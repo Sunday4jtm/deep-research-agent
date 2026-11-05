@@ -19,6 +19,8 @@ class _ScriptedProvider:
     def __init__(self, fail: bool = False) -> None:
         self.queries: list[str] = []
         self.fail = fail
+        self.hits: list[Evidence] | None = None  # 注入自定义命中（去重测试用）
+        self.fetch_text = "正文内容"
 
     def web_search(self, query: str, k: int = 4):
         self.queries.append(query)
@@ -37,7 +39,7 @@ class _ScriptedProvider:
         return []
 
     def web_fetch(self, url: str):
-        return "正文内容"
+        return self.fetch_text
 
 
 class _ScriptedChat:
@@ -210,4 +212,52 @@ def test_主备全挂抛错不假装成功(react_env, monkeypatch: pytest.Monkey
 
     with pytest.raises(RuntimeError, match="主备模型均失败"):
         run_react_research("任意问题", "", sink=ListSink())
+    get_settings.cache_clear()
+
+
+def test_fetch正文自动入册编号(react_env, monkeypatch: pytest.MonkeyPatch):
+    """提示词宣称「每次工具返回都已编号 [E#]」——fetch 正文此前裸返，
+    模型基于它的论断要么裸写无引用、要么幻觉编号（评审 P2-6）。"""
+    provider, install = react_env
+    monkeypatch.setenv("AGENT_MAX_STEPS", "6")
+    from app.config import get_settings
+
+    get_settings.cache_clear()
+    install(
+        [
+            _tool_call_msg("web_fetch", {"url": "https://s.example/hybrid"}),
+            AIMessage(content="结论 [E1]。"),
+        ]
+    )
+    sink = ListSink()
+    final = run_react_research("读透这篇", "", sink=sink)
+
+    assert len(final["evidence"]) == 1 and final["evidence"][0].eid == "E1"
+    assert final["citation_report"]["mapped"] == 1
+    get_settings.cache_clear()
+
+
+def test_utm变体不重复登记(react_env, monkeypatch: pytest.MonkeyPatch):
+    """P2-11 的规范化去重只覆盖了流水线，ReAct 曾退回 lower()+尾斜杠——对齐。"""
+    provider, install = react_env
+    monkeypatch.setenv("AGENT_MAX_STEPS", "6")
+    from app.config import get_settings
+
+    get_settings.cache_clear()
+    provider.hits = [
+        Evidence(eid="", source_type="web", title="A",
+                 locator="https://s.example/a?utm_source=x", snippet="a"),
+        Evidence(eid="", source_type="web", title="A2",
+                 locator="https://s.example/a", snippet="a"),
+    ]
+    install(
+        [
+            _tool_call_msg("web_search", {"query": "q"}),
+            AIMessage(content="报告 [E1]。"),
+        ]
+    )
+    sink = ListSink()
+    final = run_react_research("去重验证", "", sink=sink)
+
+    assert len(final["evidence"]) == 1
     get_settings.cache_clear()

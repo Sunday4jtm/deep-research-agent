@@ -57,6 +57,20 @@ def test_mcp模式返回MCPProvider(mcp_mode):
     assert isinstance(get_provider(), MCPProvider)
 
 
+def test_会话close幂等可重复调用():
+    """close 是长驻进程唯一的确定性回收出口，幂等性必须钉死。"""
+    s = _McpSession(command=[])
+    s.close()
+    s.close()  # 未初始化：无害 no-op
+
+
+def test_provider_close_持锁可重入():
+    """P2-4：close 与并发 _get_session 竞态会丢失关闭——收口改走 _session_lock。"""
+    p = MCPProvider()
+    p.close()
+    p.close()
+
+
 def test_命令按shlex解析进会话(mcp_mode, monkeypatch):
     monkeypatch.setenv("MCP_WEB_CMD", '/opt/envs/ai_study/bin/python "/tmp/a b/server.py"')
     provider = MCPProvider()

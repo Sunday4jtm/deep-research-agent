@@ -31,7 +31,7 @@ import threading
 
 from app.config import get_settings
 from app.tools.base import Evidence
-from app.tools.direct import CircuitOpen, WebSearchError, _Breaker, validate_public_url
+from app.tools.direct import WebSearchError, _Breaker, validate_public_url
 from app.tools.sanitize import sanitize_web_text
 
 logger = logging.getLogger(__name__)
@@ -69,6 +69,10 @@ class _McpSession:
             try:
                 start.result(timeout=INIT_TIMEOUT)
             except Exception:
+                # 先取消在途初始化协程再回滚：超时只代表「我们不再等」，协程若不
+                # 取消，它卡在 stdio_client.__aenter__ 里持有管道 fd，stdin 永远
+                # 不会 EOF——这才是当年孤儿 Server 进程堆积的运行时路径（评审 P1）
+                start.cancel()
                 self._teardown()
                 raise
             logger.info("MCP Server 已连接（stdio）：%s", self._command)
@@ -138,13 +142,27 @@ class _McpSession:
             self._teardown()
 
     def call(self, name: str, arguments: dict) -> dict:
-        """同步调用远端工具；工具约定都回 {"ok": ...} 结构（见 mcp_web_server.py）。"""
+        """同步调用远端工具；工具约定都回 {"ok": ...} 结构（见 mcp_web_server.py）。
+
+        失败分流（评审 P2-3/P1-2）：业务错误（工具回错误/空内容）= 会话健康，
+        原样上抛由熔断计数；超时 = 取消在途协程（不取消会永久占用共享会话）；
+        传输层异常（子进程崩溃/管道断）= 整个会话不可信，teardown 后下次调用
+        重建——此前死会话被永久复用到进程退出。
+        """
         self._ensure()
         fut = asyncio.run_coroutine_threadsafe(self._call_async(name, arguments), self._loop)
         try:
             return fut.result(timeout=CALL_TIMEOUT)
+        except WebSearchError:
+            raise
         except TimeoutError as exc:
+            fut.cancel()  # 卡死的调用不取消会一直挂在共享会话上
             raise WebSearchError(f"MCP 工具 {name} 超时（>{CALL_TIMEOUT}s）") from exc
+        except Exception as exc:
+            self._teardown()  # 下次 _ensure 重建全新会话与子进程
+            raise WebSearchError(
+                f"MCP 工具 {name} 会话异常，已重建待下次调用：{type(exc).__name__}"
+            ) from exc
 
     async def _call_async(self, name: str, arguments: dict) -> dict:
         result = await self._session.call_tool(name, arguments)
@@ -201,17 +219,22 @@ class MCPProvider:
             return session
 
     def close(self) -> None:
-        """关停两个 MCP 会话与子进程（工具工厂单例的收尾出口；未连接时无害）。"""
-        for session in (self._web, self._kb):
-            if session is not None:
-                session.close()
-        self._web = None
-        self._kb = None
+        """关停两个 MCP 会话与子进程（工具工厂单例的收尾出口；未连接时无害）。
+
+        必须持 _session_lock：并发线程正在 _get_session 里构建会话时，无锁的
+        close 会读到 None 跳过关闭，随后构建完成——单例持有活会话（含子进程）
+        且无人再负责回收（评审 P2-4，收尾路径要确定性）。
+        """
+        with self._session_lock:
+            for session in (self._web, self._kb):
+                if session is not None:
+                    session.close()
+            self._web = None
+            self._kb = None
 
     # ---- web_search / web_fetch：MCP Server A（老仓库 web_research 的包装）----
     def web_search(self, query: str, k: int = 3) -> list[Evidence]:
-        if self._web_breaker.open:
-            raise CircuitOpen(f"mcp-web 熔断中（连续失败 {self._web_breaker.fails} 次）")
+        self._web_breaker.allow()
         try:
             payload = self._get_web().call("web_search", {"query": query, "count": k})
             if not payload.get("ok"):
@@ -252,8 +275,7 @@ class MCPProvider:
         # 进程里（评审 P1-7）——本地字面校验 + 老仓库 provider.fetch 校验双层。
         # 放在 try/breaker 之外：配置类错误不是 provider 健康问题，不该计数熔断
         validate_public_url(url)
-        if self._web_breaker.open:
-            raise CircuitOpen("mcp-web 熔断中")
+        self._web_breaker.allow()
         try:
             payload = self._get_web().call("web_fetch", {"url": url})
             if not payload.get("ok"):
@@ -269,8 +291,7 @@ class MCPProvider:
 
     # ---- kb_search / kb_status：MCP Server B（老仓库 search_hybrid 的包装，D7）----
     def kb_search(self, query: str, k: int = 3) -> list[Evidence]:
-        if self._kb_breaker.open:
-            raise CircuitOpen(f"mcp-kb 熔断中（连续失败 {self._kb_breaker.fails} 次）")
+        self._kb_breaker.allow()
         try:
             payload = self._get_kb().call("kb_search", {"query": query, "k": k})
             if not payload.get("ok"):
@@ -310,8 +331,7 @@ class MCPProvider:
         return out
 
     def kb_status(self) -> dict:
-        if self._kb_breaker.open:
-            raise CircuitOpen("mcp-kb 熔断中")
+        self._kb_breaker.allow()
         try:
             payload = self._get_kb().call("kb_status", {})
             if not payload.get("ok"):

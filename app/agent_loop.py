@@ -41,7 +41,7 @@ from app.contracts import (
 )
 from app.llm import _build_chat, _model_chain, estimate_tokens
 from app.tools import get_provider
-from app.tools.base import Evidence
+from app.tools.base import Evidence, canonicalize_locator
 from app.tools.sanitize import detect_injection, sanitize_web_text, strip_injected_lines
 from app.tracing import callbacks as tracing_callbacks
 
@@ -52,7 +52,7 @@ _SYSTEM = """你是自主研究 Agent，通过调用工具完成一次带引用�
 工具说明：
 - web_search(query)：公网搜索（返回已编号的证据片段）
 - kb_search(query)：私有知识库混合检索（返回已编号的证据片段）
-- web_fetch(url)：抓取某条公网证据的完整正文
+- web_fetch(url)：抓取某条公网证据的完整正文（正文同样自动编号入册 [E#]）
 
 规则：
 1. 每次工具返回的结果都已自动编号 [E#]；最终报告里每个论断必须标注 [E#]，
@@ -76,12 +76,13 @@ class _ReactLoop:
         self.seen: set[str] = set()
         self.steps = 0
         self.errors: list[str] = []
+        self._tokens = 0  # 每步输出 token 粗估累计（口径见 run 内注释）
 
     # ---- 证据册：工具结果 → [E#] 编号（与流水线 retriever 同口径）----
     def _register(self, hits) -> str:
         lines: list[str] = []
         for hit in hits:
-            canonical = hit.locator.lower().rstrip("/")
+            canonical = canonicalize_locator(hit.locator)
             if canonical in self.seen:
                 continue
             self.seen.add(canonical)
@@ -134,6 +135,41 @@ class _ReactLoop:
             )
         return "已登记证据：\n" + "\n".join(lines)
 
+    def _register_fetch(self, url: str, text: str) -> str:
+        """抓取正文入册编号：让提示词「每次工具返回都已编号 [E#]」成真。
+
+        fetch 正文此前裸返——模型基于它的论断要么违反引用规则裸写（引用
+        存在率掉）、要么幻觉编号（citation pass unmapped）。同 URL 重复
+        抓取返回已有编号不重复入册（fetch 是该来源的全文扩展）。
+        """
+        canonical = canonicalize_locator(url)
+        for ev in self.evidence:
+            if canonicalize_locator(ev.locator) == canonical:
+                return (
+                    f"正文已抓取（{len(text)} 字）。该来源已登记为 [{ev.eid}]，"
+                    f"引用使用 [{ev.eid}]。"
+                )
+        ev = Evidence(
+            eid=f"E{len(self.evidence) + 1}",
+            source_type="web",
+            title=url.split("//", 1)[-1][:120],
+            locator=url,
+            snippet=sanitize_web_text(text),
+        )
+        self.evidence.append(ev)
+        self.sink.emit(
+            AgentEvent(
+                EVENT_EVIDENCE_ADDED,
+                {
+                    "eid": ev.eid,
+                    "source_type": ev.source_type,
+                    "title": ev.title,
+                    "locator": ev.locator,
+                },
+            )
+        )
+        return f"[{ev.eid}] 已抓取并登记 {url} 的正文（{len(text)} 字）。引用使用 [{ev.eid}]。"
+
     def _dispatch(self, name: str, args: dict) -> str:
         """执行一次工具调用；失败返回错误文本（Agent 观察 后自行调整）。"""
         try:
@@ -142,7 +178,8 @@ class _ReactLoop:
             if name == "kb_search":
                 return self._register(self.provider.kb_search(str(args["query"]), k=4))
             if name == "web_fetch":
-                return self.provider.web_fetch(str(args["url"]))
+                text = self.provider.web_fetch(str(args["url"]))
+                return self._register_fetch(str(args["url"]), text)
             return f"未知工具 {name}"
         except Exception as exc:  # noqa: BLE001 —— 工具失败是"观察"的一部分
             self.errors.append(f"{name}: {type(exc).__name__}")
@@ -233,6 +270,9 @@ class _ReactLoop:
         report = ""
         for self.steps in range(1, max_steps + 1):
             resp = self._invoke_step(bound, messages)
+            # 口径如实（评审 P1：旧实现 = 报告字数估算×步数，无物理含义）：
+            # 每步调用的输出按统一粗估累加，与流水线各档「输出粗估」同源
+            self._tokens += estimate_tokens(str(getattr(resp, "content", "") or ""))
             if getattr(resp, "tool_calls", None):
                 messages.append(resp)
                 for tc in resp.tool_calls:
@@ -298,7 +338,7 @@ class _ReactLoop:
                 EVENT_DONE,
                 {
                     "citation_report": self._cite(report),
-                    "token_usage": {"agent": estimate_tokens(report) * self.steps},
+                    "token_usage": {"agent": self._tokens},
                 },
             )
         )

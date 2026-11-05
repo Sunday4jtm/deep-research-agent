@@ -44,7 +44,7 @@ def test_plan_falls_back_to_template_without_keys(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """一个 Key 都没有时也必须能出结果——③级兜底是硬保证。"""
-    from app.llm import _build_chat
+    from app.llm import _chat_cache_clear
 
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
     monkeypatch.delenv("ZHIPU_API_KEY", raising=False)
@@ -55,4 +55,4 @@ def test_plan_falls_back_to_template_without_keys(
         assert usage["planner"] >= 1
     finally:
         get_settings.cache_clear()
-        _build_chat.cache_clear()
+        _chat_cache_clear()

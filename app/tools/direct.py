@@ -117,26 +117,47 @@ def _post_with_retry(url: str, payload: dict, headers: dict) -> dict:
     raise WebSearchError(f"请求重试后仍失败：{last}") from last
 
 
-class _Breaker:
-    """连续失败计数器：成功清零，达到阈值熔断。
+BREAKER_COOLDOWN_SECONDS = 30.0  # 熔断冷却：期满放行一次探测（半开），成功即闭合
 
-    D9 起检索并行化（nodes.py 线程池并发调 web/kb），record 会被多线程
-    同时调——计数读写必须加锁，否则熔断阈值可能被并发竞态吞掉。
+
+class _Breaker:
+    """连续失败计数器：成功清零，达到阈值熔断；冷却期满半开放行一次探测。
+
+    为什么必须有半开：旧实现 open 之后成功永不可达（所有调用在入口即抛
+    CircuitOpen，record(True) 永远轮不到执行）——公网一次抖动 = 该源在本
+    进程生命周期内永久死亡，Streamlit 长驻演示场景一次 WiFi 抖动就翻车
+    （评审 P1）。语义：open 且距上次失败超过冷却期 → 放行唯一探测请求
+    （探测期间其余调用仍被拦），成功 record(True) 闭合，失败刷新冷却计时。
+    D9 起检索并行化，record/allow 会被多线程同时调——计数读写必须加锁。
     """
 
-    def __init__(self, name: str) -> None:
+    def __init__(self, name: str, cooldown: float = BREAKER_COOLDOWN_SECONDS) -> None:
         self.name = name
+        self.cooldown = cooldown
         self._fails = 0
+        self._last_fail_ts = 0.0
+        self._probing = False
         self._lock = threading.Lock()
+
+    def allow(self) -> None:
+        """入口闸：放行或抛 CircuitOpen（替代旧的 .open 属性 + 手动 raise）。"""
+        with self._lock:
+            if self._fails < BREAKER_THRESHOLD:
+                return
+            cooled = (time.monotonic() - self._last_fail_ts) >= self.cooldown
+            if cooled and not self._probing:
+                self._probing = True  # 探测位由 record 收口（成功闭合/失败刷新）
+                return
+            raise CircuitOpen(f"{self.name} 熔断中（连续失败 {self._fails} 次）")
 
     def record(self, ok: bool) -> None:
         with self._lock:
-            self._fails = 0 if ok else self._fails + 1
-
-    @property
-    def open(self) -> bool:
-        with self._lock:
-            return self._fails >= BREAKER_THRESHOLD
+            self._probing = False
+            if ok:
+                self._fails = 0
+            else:
+                self._fails += 1
+                self._last_fail_ts = time.monotonic()
 
     @property
     def fails(self) -> int:
@@ -155,6 +176,12 @@ class DirectProvider:
     # ---- web_search：DeepSeek 主路，智谱兜底 ----
     def web_search(self, query: str, k: int = 3) -> list[Evidence]:
         settings = get_settings()
+        # 开关语义必须真实（评审 P1：WEB_PROVIDER=none 此前被无视，配了智谱
+        # Key 照样发起收费搜索；tavily 是从未实现的幽灵选项，一并从口径移除）
+        if settings.web_provider == "none":
+            raise WebSearchError(
+                "WEB_PROVIDER=none：公网搜索已停用（.env 改回 deepseek/zhipu 可恢复）"
+            )
         attempts: list[str] = []
         if settings.deepseek_api_key and settings.web_provider == "deepseek":
             try:
@@ -164,13 +191,11 @@ class DirectProvider:
                 logger.warning("DeepSeek 搜索失败，降级智谱：%s", exc)
         if settings.zhipu_api_key:
             return self._zhipu_search(query, k)
-        raise WebSearchError(
-            "没有可用的 web_search provider（" + "; ".join(attempts) + "）"
-        )
+        hint = "; ".join(attempts) if attempts else "Key 与 WEB_PROVIDER 组合无可用路"
+        raise WebSearchError(f"没有可用的 web_search provider（{hint}）")
 
     def _deepseek_search(self, query: str, k: int) -> list[Evidence]:
-        if self._deepseek_breaker.open:
-            raise CircuitOpen(f"deepseek 熔断中（连续失败 {self._deepseek_breaker.fails} 次）")
+        self._deepseek_breaker.allow()
         settings = get_settings()
         try:
             data = _post_with_retry(
@@ -189,8 +214,7 @@ class DirectProvider:
             raise
 
     def _zhipu_search(self, query: str, k: int) -> list[Evidence]:
-        if self._zhipu_breaker.open:
-            raise CircuitOpen(f"zhipu 熔断中（连续失败 {self._zhipu_breaker.fails} 次）")
+        self._zhipu_breaker.allow()
         settings = get_settings()
         # 走智谱【独立】web_search API。实测记录（D4）：
         # 1) OpenAI 兼容 chat 端点挂 tools=[web_search] 不产生真实搜索
@@ -251,8 +275,7 @@ class DirectProvider:
         if not settings.deepseek_api_key:
             raise WebSearchError("网页抓取仅 DeepSeek provider 支持（当前未配置其 Key）")
         validate_public_url(url)
-        if self._deepseek_breaker.open:
-            raise CircuitOpen("deepseek 熔断中")
+        self._deepseek_breaker.allow()
         try:
             data = _post_with_retry(
                 f"{DEEPSEEK_API}/v1/tools/fetch",
@@ -303,8 +326,7 @@ class DirectProvider:
             raise WebSearchError(f"老仓库响应异常（{type(exc).__name__}）") from exc
 
     def kb_search(self, query: str, k: int = 3) -> list[Evidence]:
-        if self._kb_breaker.open:
-            raise CircuitOpen(f"kb 熔断中（连续失败 {self._kb_breaker.fails} 次）")
+        self._kb_breaker.allow()
         try:
             data = self._kb_get("/api/kb/search", {"q": query, "k": k})
             out: list[Evidence] = []
@@ -335,8 +357,7 @@ class DirectProvider:
             raise
 
     def kb_status(self) -> dict:
-        if self._kb_breaker.open:
-            raise CircuitOpen("kb 熔断中")
+        self._kb_breaker.allow()
         try:
             data = self._kb_get("/api/kb/status", {})
             self._kb_breaker.record(True)

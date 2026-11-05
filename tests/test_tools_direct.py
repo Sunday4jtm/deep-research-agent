@@ -158,6 +158,43 @@ def test_validate_public_url_rejects_internal() -> None:
 
 
 # ============================================================
+# 熔断半开恢复（评审 P1：旧实现 open 后成功永不可达=进程级永久死亡）
+# ============================================================
+def test_熔断冷却期内仍拦截() -> None:
+    b = direct_mod._Breaker("t")
+    for _ in range(3):
+        b.record(False)
+    with pytest.raises(CircuitOpen):
+        b.allow()
+
+
+def test_熔断冷却期满半开放行探测() -> None:
+    b = direct_mod._Breaker("t", cooldown=0.0)
+    for _ in range(3):
+        b.record(False)
+    b.allow()  # 冷却期满：第一个调用作为探测放行
+    with pytest.raises(CircuitOpen):
+        b.allow()  # 探测期间其余调用仍被拦
+    b.record(True)  # 探测成功 → 闭合
+    b.allow()
+    b.record(False)
+    b.allow()  # 未达阈值照常放行
+
+
+def test_web_provider_none_直接停用(monkeypatch: pytest.MonkeyPatch) -> None:
+    """WEB_PROVIDER=none 此前被无视照样搜（还可能走收费智谱）——开关语义必须真实。"""
+    monkeypatch.setenv("WEB_PROVIDER", "none")
+    monkeypatch.setenv("ZHIPU_API_KEY", "sk-test")
+    get_settings.cache_clear()
+    try:
+        provider = DirectProvider()
+        with pytest.raises(WebSearchError, match="已停用"):
+            provider.web_search("q", k=3)
+    finally:
+        get_settings.cache_clear()
+
+
+# ============================================================
 # kb 侧（D6）：HTTP 直连老仓库 /api/kb/search（Q4 direct 兜底）
 # ============================================================
 class _FakeGetResp:

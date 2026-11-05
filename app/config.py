@@ -88,9 +88,11 @@ def get_settings() -> Settings:
         breadth=_env_int("BREADTH", 3),
         evidence_char_budget=_env_int("EVIDENCE_CHAR_BUDGET", 12000),
         agent_mode=_env("AGENT_MODE", "research"),
-        agent_max_steps=int(_env("AGENT_MAX_STEPS", "10")),
+        # 裸 int() 是 P3-16 修复声称消灭的故障类在这里漏网：.env 手滑全站崩（评审）
+        agent_max_steps=_env_int("AGENT_MAX_STEPS", 10),
         reflect_mode=_env("REFLECT_MODE", "llm"),
-        memory_enabled=_env("MEMORY_ENABLED", "1") in {"1", "true", "yes", "on"},
+        # .lower()：大写 True/TRUE 此前静默视为关闭——「配置了但没生效」经典事故（评审 P3）
+        memory_enabled=_env("MEMORY_ENABLED", "1").lower() in {"1", "true", "yes", "on"},
         injection_filter=_env("INJECTION_FILTER", "strict"),
-        tracing_enabled=_env("LANGFUSE_ENABLED") in {"1", "true", "yes", "on"},
+        tracing_enabled=_env("LANGFUSE_ENABLED").lower() in {"1", "true", "yes", "on"},
     )

@@ -16,3 +16,23 @@ def test_非数字env回退默认值不崩(monkeypatch: pytest.MonkeyPatch) -> N
         assert settings.breadth == 3, "空串也按默认值处理"
     finally:
         get_settings.cache_clear()  # 坏值绝不能留在缓存里毒害后续测试
+
+
+def test_agent_max_steps_手滑不崩(monkeypatch: pytest.MonkeyPatch) -> None:
+    """裸 int() 曾是 P3-16 修复的漏网点：AGENT_MAX_STEPS=1a0 全站起不来。"""
+    monkeypatch.setenv("AGENT_MAX_STEPS", "1a0")
+    get_settings.cache_clear()
+    try:
+        assert get_settings().agent_max_steps == 10
+    finally:
+        get_settings.cache_clear()
+
+
+def test_布尔开关大写也生效(monkeypatch: pytest.MonkeyPatch) -> None:
+    """大写 True/TRUE 此前静默视为关闭——「配置了但没生效」经典事故。"""
+    monkeypatch.setenv("LANGFUSE_ENABLED", "TRUE")
+    get_settings.cache_clear()
+    try:
+        assert get_settings().tracing_enabled is True
+    finally:
+        get_settings.cache_clear()

@@ -19,7 +19,10 @@ _SCRIPT = re.compile(r"<(script|style)\b.*?</\1\s*>", re.DOTALL | re.IGNORECASE)
 _TAGS = re.compile(r"<[a-zA-Z/!][^>]{0,199}>")
 
 # 注入特征模式（中英都收）：命中即发 warning 事件，不静默丢弃内容——
-# 记录下来既是安全信号，也是 D10 评测"注入防御"指标的观测来源
+# 记录下来既是安全信号，也是 D10 评测"注入防御"指标的观测来源。
+# 刻意不收 "system prompt"/"act as"：LLM 技术文的高频正常词，strict 模式下
+# 误报会把正常证据隔离出综合 prompt（评审推演的误杀面）；角色扮演类攻击
+# 由 "you are now"/"pretend to be" 覆盖
 INJECTION_PATTERNS = (
     "ignore previous",
     "ignore above",
@@ -29,9 +32,7 @@ INJECTION_PATTERNS = (
     "forget previous",
     "forget all",
     "new instructions",
-    "system prompt",
     "you are now",
-    "act as",
     "pretend to be",
     "reveal your",
     "忽略以上",
