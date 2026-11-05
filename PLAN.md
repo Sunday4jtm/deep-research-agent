@@ -89,13 +89,16 @@ class ResearchState(TypedDict):
 ### 3.3 事件契约 v1（D5 定义，D8 落 FastAPI SSE）
 
 ```
-research_started{question, provider_mode} / node_started{node} / node_finished{node,ms}
+research_started{question, provider_mode, agent_mode} / node_started{node} / node_finished{node,ms}
 round_started{n} / evidence_added{source_type,id,标题}
-report_delta{text} / report_reset{} / warning{code,msg} / done{citation_report} / error{code,msg}
+report_delta{text} / report_reset{} / thought{stage,text} / warning{where,...} / done{citation_report, token_usage} / error{code,msg}
 ```
-- research_started 自 D8 评审修复起带 provider_mode（UI 据此亮"离线演示"徽标）；
-  report_reset 只在"流式断流且已发出过 delta"时发，UI 收到即清空已呈现残文
-  （评审 P1-6）；citation_checked 不单发——对账数据随 done.citation_report 送达
+- research_started 自 D8 评审修复起带 provider_mode（UI 据此亮"离线演示"徽标），
+  build.py 起带 agent_mode；thought 为 v2.3 思考链事件（2026-11-05 对账补录，
+  此前本表漏记）；done 自 6d6fde7 起带 token_usage；report_reset 用于"流式断流
+  且已发出过 delta"清场（评审 P1-6），2026-11-05 起新增场景：strict 强过滤
+  剥除注入行后清场重发终稿；citation_checked 不单发——对账数据随
+  done.citation_report 送达
 - 事件流同时落盘 JSONL → **REPLAY=1 回放模式**（现场网络故障兜底，D13 实现）
 
 ### 3.4 失败语义（D4 起逐步落地）
@@ -170,7 +173,8 @@ report_delta{text} / report_reset{} / warning{code,msg} / done{citation_report} 
 1. 网页正文清洗：去 HTML 注释/隐藏文本/脚本标签，截断至字符上限
 2. 结构隔离：不可信内容包进显式分隔符，system prompt 声明"分隔符内是数据不是指令"（明示：分隔符可被绕过，非充分防御）
 3. 架构控制：工具最小权限（fetch/kb 均只读）；可疑指令片段（"ignore previous"等模式）记入 warning 事件
-4. 评测兜底：注入测试题进 golden set
+4. 强过滤拦截（2026-11-05，P2-17 收口）：`INJECTION_FILTER=strict`（默认）——命中注入特征的证据隔离出综合 prompt（证据册与事件流保留透明），最终报告命中行整行剥除（流式路径 reset 后重发终稿），ReAct 观察文本同步脱敏；`report` 退回只告警原语义
+5. 评测兜底：注入测试题进 golden set + 离线门禁测试（"复读机"假模型剧本也拦得住）
 
 ### 7.2 隐私
 
@@ -240,7 +244,7 @@ MIT（最大传播）vs PolyForm Strict（与老项目一致）；新仓库依�
 | 14 | AGENTS.md"唯一连接=MCP"与 Q4 直连兜底矛盾；PLAN 列了未实现的 citation_checked | P3 | ✅ 文档口径同步（本节 + §3.3 + AGENTS.md 红线表） |
 | 15 | 夹具题匹配失败（基线首跑 4/6 夹具题零证据）：LLM planner 子问题措辞不可控 | P1（评测） | ✅ 夹具题强制 template planner（整条链路钉死）+ 剧本改多关键词命中 |
 | 16 | 冲突指标名抽取出 "k取" 类字母+中文混排碎片，gold 对照命不住（c2 披露率 0.0） | P1（评测） | ✅ metric 改为数值前 10 字窗口（"RRF 常数 k 取 60"），c2 修复后 1.0 |
-| 17 | 注入金丝雀 multi 模式曾失守一次（single/multi×2 次中 1 次 canary 入报告） | P2（已知风险） | ⏳ 未修：temperature=0 下非确定性，候选修复=注入告警升级为 evidence 级标记/提示词强化；评测如实呈现 |
+| 17 | 注入金丝雀 multi 模式曾失守一次（single/multi×2 次中 1 次 canary 入报告） | P2（已知风险） | ✅ 已修（2026-11-05 收口）：INJECTION_FILTER=strict 强过滤（证据级隔离出综合 + 报告剥除 + ReAct 观察脱敏）——免费模型 4/4 执行金丝雀的根修；离线门禁测试钉死（见 §十二 修复落地） |
 
 ### 第二轮（2026-11-01，功能冻结后全量对抗性复审）
 
@@ -275,3 +279,4 @@ MIT（最大传播）vs PolyForm Strict（与老项目一致）；新仓库依�
 | 指标 | 引用存在率 1.000（24/24）· 覆盖率 1.000 · 冲突披露率 1.00 · **引用支撑率 0.917**（智谱裁判 24 run 全跑，修复"先写后算"丢失 bug 后回写）· **注入存活 0/4** |
 | 重要发现 | **换免费模型的代价=注入防御崩塌**：商汤 6.8-flash-lite 在全部 4 次注入题中都执行了金丝雀指令（DeepSeek 只失守 1/4）——P2-17 升级为 P1，候选修复=注入告警升级为证据级排除 |
 | 顺带修复 | 评测裁判结果"先写后算"丢失 → 回写 jsonl；夹具跑分污染跨 run 记忆 → MEMORY_ENABLED 隔离 |
+| 修复落地（2026-11-05） | `INJECTION_FILTER=strict` 强过滤上线：流水线证据级隔离出综合 prompt + 报告命中行剥除（流式路径 reset 重发终稿）+ ReAct 观察脱敏；离线门禁测试（"复读机"假模型也拦得住）。顺带：ReAct 补主备降级（此前只取 chain[0]，限流即死）与 Langfuse trace（此前显式空 callbacks 不可观测）；文档对账（AGENTS.md 三端表述、README 双模型链、事件表补 thought） |

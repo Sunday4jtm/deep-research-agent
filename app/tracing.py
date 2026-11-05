@@ -1,8 +1,9 @@
 """Langfuse 追踪接入（D9）：全链路 LLM 调用的"行车记录仪"。
 
-为什么收敛在这一个模块：callback 的注入点在 llm.invoke_with_fallback 与
-synthesizer 的 stream/invoke（chat 调用仅有的三个出口），开关/mask/flush
-的策略只写一份，三端（Streamlit/网关/未来 Next.js 经网关）天然共享。
+为什么收敛在这一个模块：callback 的注入点覆盖 chat 调用的全部出口——
+llm.invoke_with_fallback（verifier 反思链）、synthesizer（流式/非流式/
+压缩）与 agent_loop 的 ReAct 每步，开关/mask/flush 的策略只写一份，
+各端（静态研究台/Streamlit/未来 Next.js 经网关）天然共享。
 
 mask 的实现与局限（如实记录）：SDK v5 的 get_client 在"进程首个实例"
 上做注册克隆，且克隆是否保留 mask 未经网络路径实证——所以这里在进程
