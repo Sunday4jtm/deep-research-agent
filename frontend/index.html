@@ -7,6 +7,8 @@
 <style>
   /* ============================================================
      研知 · 静态前端（Perplexity 答案页 × Linear 暗色，手写无依赖）
+     改版原则：不设辅助标签与说明文字，层级交给
+     字号×字重×灰阶×留白×对齐五个布局变量承载（NN/g #8 + Geist 阶梯）
      色板：近黑底 / 灰阶层次 / 发丝边框 / 唯一 teal 强调
      ============================================================ */
   :root {
@@ -26,18 +28,17 @@
            padding: 14px 28px; border-bottom: 1px solid var(--border-soft); }
   .wordmark { font-weight: 650; letter-spacing: -0.02em; font-size: 15px; }
   .wordmark em { font-style: normal; color: var(--accent); }
-  header .right { display: flex; align-items: center; gap: 14px; font-size: 12.5px; color: var(--muted); }
-  header a { color: var(--muted); text-decoration: none; }
+  header .right { display: flex; align-items: center; gap: 16px; }
+  /* provider·模式是评测对照的关键信息，保留但降为纯 mono 小字（去胶囊边框） */
+  .provider { font-family: var(--mono); font-size: 11.5px; color: var(--muted); }
+  header a { color: var(--muted); text-decoration: none; font-size: 12.5px; }
   header a:hover { color: var(--text-2); }
-  .mode { font-family: var(--mono); font-size: 11.5px; color: var(--accent);
-          border: 1px solid #23413c; border-radius: 999px; padding: 2px 9px; }
 
   main { max-width: 780px; margin: 0 auto; padding: 0 20px 80px; }
 
-  /* ---- 首屏：大输入 ---- */
+  /* ---- 首屏：大输入（副标题与操作说明已删——placeholder 与建议 chips 本身即引导） ---- */
   #home { padding-top: 13vh; text-align: center; }
-  #home h1 { font-size: 30px; font-weight: 650; letter-spacing: -0.02em; margin: 0 0 8px; }
-  #home .sub { color: var(--muted); font-size: 14px; margin-bottom: 28px; }
+  #home h1 { font-size: 30px; font-weight: 650; letter-spacing: -0.02em; margin: 0 0 24px; }
   .prompt { display: flex; gap: 10px; align-items: flex-end;
             background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
             padding: 12px 12px 12px 16px; transition: border-color .15s; }
@@ -49,45 +50,52 @@
         padding: 9px 18px; font: inherit; font-weight: 600; cursor: pointer; }
   .go:hover { background: var(--accent); }
   .go:disabled { background: #1b1d1f; color: var(--faint); cursor: default; }
-  .modes { display: flex; gap: 8px; justify-content: center; margin-top: 20px; }
-  .mode-chip { font-size: 12.5px; color: var(--muted); border: 1px solid var(--border);
-               background: none; border-radius: 8px; padding: 6px 14px; cursor: pointer; }
-  .mode-chip.on { color: var(--accent); border-color: var(--accent-dim);
-                  background: rgba(31,165,149,.08); }
+
+  /* 模式分段控件：短词自明，被删的解释语义下沉到 title（无障碍层） */
+  .modes { display: inline-flex; gap: 2px; margin-top: 18px;
+           border: 1px solid var(--border); border-radius: 9px; padding: 2px; }
+  .mode-chip { font-size: 12.5px; color: var(--muted); border: none; background: none;
+               border-radius: 7px; padding: 5px 16px; cursor: pointer; }
+  .mode-chip.on { color: var(--text); background: #232529; }
   .chips { display: flex; gap: 8px; justify-content: center; margin-top: 14px; flex-wrap: wrap; }
   .chip { font-size: 12.5px; color: var(--muted); border: 1px solid var(--border);
           border-radius: 999px; padding: 5px 14px; cursor: pointer; background: none; }
   .chip:hover { color: var(--text-2); border-color: #3a3d41; }
-  .hint { margin-top: 22px; font-size: 12px; color: var(--faint); }
 
-  /* ---- 运行态 ---- */
+  /* ---- 运行态：状态只靠点的形态与计数行，不用动词文案 ---- */
   #run { padding-top: 40px; display: none; }
-  .status { display: flex; align-items: center; gap: 10px; font-size: 13.5px; color: var(--text-2);
-            min-height: 22px; }
+  .status { display: flex; align-items: center; gap: 10px; min-height: 20px;
+            font-size: 13px; color: var(--muted); }
+  #meta { font-variant-numeric: tabular-nums; }
   .dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--faint); }
   .dot.run { background: #e2b93b; animation: pulse 1.2s ease-in-out infinite; }
   .dot.ok { background: var(--ok); } .dot.err { background: var(--err); }
   @keyframes pulse { 50% { opacity: .35; } }
-  .round { font-family: var(--mono); font-size: 11.5px; color: var(--faint); }
   .bar { height: 2px; background: var(--border-soft); border-radius: 2px; margin: 10px 0 26px; overflow: hidden; }
   .bar > i { display: block; height: 100%; width: 0; background: var(--accent-dim); transition: width .6s; }
 
-  .sect { font-size: 11px; letter-spacing: .1em; text-transform: uppercase;
-          color: var(--faint); margin: 26px 0 10px; }
-  #sources { display: flex; flex-wrap: wrap; gap: 7px; min-height: 0; }
+  /* 思考链时间线：stage 前缀是结构信息，保留但降为弱灰 mono（让文本自己说话） */
+  #thoughts { border-left: 2px solid var(--border); padding-left: 14px; margin: 4px 0 2px; }
+  #thoughts:empty { display: none; }
+  .thought { font-size: 12.5px; color: var(--text-2); padding: 3px 0; }
+  .thought b { color: var(--faint); font-family: var(--mono); font-size: 11px;
+               font-weight: 400; letter-spacing: .06em; margin-right: 8px; }
+
+  /* 来源 chips 紧贴思考链下方：chips 本身自明，不再挂"取证来源"区块标签 */
+  #sources { display: flex; flex-wrap: wrap; gap: 7px; }
   #sources:empty { display: none; }
   .src { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--text-2);
          background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
          padding: 5px 11px; max-width: 340px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .src i { width: 6px; height: 6px; border-radius: 50%; flex: none; }
   .src.kb i { background: var(--kb); } .src.web i { background: var(--web); }
+  .src .eid { font-family: var(--mono); font-size: 10.5px; color: var(--faint); }
 
-  /* ---- 报告 ---- */
-  #reportCard { display: none; margin-top: 26px; background: var(--panel);
-                border: 1px solid var(--border); border-radius: 12px; padding: 26px 30px; }
-  #report { font-size: 14.5px; color: #d6d9dd; }
-  #report h1, #report h2, #report h3 { letter-spacing: -0.01em; color: var(--text); margin: 1.4em 0 .5em; }
-  #report h1 { font-size: 20px; } #report h2 { font-size: 17px; } #report h3 { font-size: 15px; }
+  /* ---- 报告即文档：撤卡片容器，发丝线分隔来源与正文（Gemini/Kimi 同款趋势） ---- */
+  #reportDoc { display: none; border-top: 1px solid var(--border-soft); margin-top: 26px; padding-top: 22px; }
+  #report { font-size: 15px; line-height: 1.85; color: #d6d9dd; }
+  #report h1, #report h2, #report h3 { letter-spacing: -0.01em; color: var(--text); margin: 1.5em 0 .5em; }
+  #report h1 { font-size: 22px; } #report h2 { font-size: 17.5px; } #report h3 { font-size: 15.5px; }
   #report p { margin: .8em 0; }
   #report li { margin: .35em 0; }
   #report code { font-family: var(--mono); font-size: 12.5px; background: #0f1011;
@@ -96,26 +104,20 @@
   .caret { display: inline-block; width: 7px; height: 15px; background: var(--accent);
            vertical-align: -2px; animation: pulse 1s steps(2) infinite; }
 
-  /* 引用对账数字组 */
-  #stats { display: none; gap: 34px; margin: 22px 2px 0; }
-  #stats div b { display: block; font-size: 22px; font-weight: 600; letter-spacing: -0.01em; }
-  #stats div span { font-size: 11.5px; color: var(--muted); }
-  #stats .bad b { color: var(--err); }
+  /* 对账行：数字即标签的一行元信息；好状态（全部映射）不占版面，坏状态以红色出现 */
+  #stats { display: none; margin-top: 20px; font-size: 12.5px; color: var(--muted); }
+  #stats b { font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums; }
+  #stats b.bad { color: var(--err); }
 
-  /* 思考链时间线：规划/反思/压缩的阶段文本 */
-  #thoughts { border-left: 2px solid var(--border); padding-left: 14px; margin: 4px 0 2px; }
-  .thought { font-size: 12.5px; color: var(--text-2); padding: 3px 0; }
-  .thought b { color: var(--accent); font-family: var(--mono); font-size: 11px;
-               letter-spacing: .06em; margin-right: 8px; }
-
-  /* 事件日志 */
-  details { margin-top: 30px; border-top: 1px solid var(--border-soft); padding-top: 14px; }
-  summary { cursor: pointer; font-size: 12.5px; color: var(--muted); }
+  /* 事件审计：塌缩为一行计数（Perplexity "Completed N steps" 同款），展开仍是全量 JSON */
+  #logWrap { display: none; margin-top: 30px; border-top: 1px solid var(--border-soft); padding-top: 12px; }
+  #logWrap summary { cursor: pointer; font-family: var(--mono); font-size: 11.5px; color: var(--faint); }
   #log { font-family: var(--mono); font-size: 11.5px; color: var(--faint);
          max-height: 260px; overflow: auto; margin-top: 10px; }
   #log div { padding: 1px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   #log .w { color: var(--warn); } #log .e { color: var(--err); }
 
+  /* 错误框挂在 main 层：首屏探活失败也要能告知（不随 run 区块隐藏） */
   .errbox { display: none; margin-top: 18px; border: 1px solid #3a2b29; background: #1c1413;
             color: var(--err); border-radius: 10px; padding: 12px 16px; font-size: 13.5px; }
 </style>
@@ -124,7 +126,7 @@
 <header>
   <span class="wordmark">研知 <em>·</em> Deep Research Agent</span>
   <span class="right">
-    <span class="mode" id="modePill">…</span>
+    <span class="provider" id="modePill"></span>
     <a href="https://cloud.langfuse.com" target="_blank" rel="noreferrer">Langfuse ↗</a>
   </span>
 </header>
@@ -132,31 +134,28 @@
 <main>
   <section id="home">
     <h1>今天研究什么？</h1>
-    <div class="sub">私有知识库与公网双源取证 · 多跳验证回环 · 每句结论带引用</div>
     <div class="prompt">
-      <textarea id="q" rows="1" placeholder="例：混合检索相比纯向量检索解决了什么问题？"></textarea>
+      <textarea id="q" rows="1" aria-label="研究问题" placeholder="例：混合检索相比纯向量检索解决了什么问题？"></textarea>
       <button class="go" id="go">开始研究</button>
     </div>
-    <div class="modes">
-      <button class="mode-chip on" data-mode="research" id="modeR">流水线模式（可评测）</button>
-      <button class="mode-chip" data-mode="react" id="modeA">自主 Agent（ReAct）</button>
+    <div class="modes" role="group" aria-label="Agent 模式">
+      <button class="mode-chip on" data-mode="research" title="流水线：规划→多跳取证→验证→综合，过程可评测">流水线</button>
+      <button class="mode-chip" data-mode="react" title="ReAct：自主循环，边想边查">ReAct</button>
     </div>
     <div class="chips" id="chips"></div>
-    <div class="hint">Enter 换行 · 点击建议可直接开始 · 取证链路走 MCP stdio（私有库 + 公网）</div>
   </section>
 
   <section id="run" style="display: none">
-    <div class="status"><i class="dot run" id="dot"></i><span id="statusText">连接网关…</span>
-      <span class="round" id="roundText"></span></div>
+    <div class="status"><i class="dot run" id="dot"></i><span id="meta"></span></div>
     <div class="bar"><i id="barFill" style="width: 4%"></i></div>
     <div id="thoughts"></div>
-    <div class="sect" id="srcSect" style="display:none">取证来源</div>
     <div id="sources"></div>
-    <div id="reportCard"><div id="report"></div></div>
+    <div id="reportDoc"><div id="report"></div></div>
     <div id="stats"></div>
-    <div class="errbox" id="errbox"></div>
-    <details><summary>研究过程事件</summary><div id="log"></div></details>
+    <details id="logWrap"><summary id="logCount"></summary><div id="log"></div></details>
   </section>
+
+  <div class="errbox" id="errbox"></div>
 </main>
 
 <script>
@@ -187,6 +186,9 @@ function md(src) {
   return out.join("\n");
 }
 
+/* 千位折叠：计数行里 1240 → 1.2k——数字即标签，别让元信息比正文还长 */
+const fmtK = (n) => n >= 1000 ? (n / 1000).toFixed(1).replace(/\.0$/, "") + "k" : String(n);
+
 /* ---------- 建议问题 ---------- */
 const EXAMPLES = [
   "混合检索相比纯向量检索解决了什么问题？",
@@ -200,7 +202,7 @@ for (const t of EXAMPLES) {
   $("chips").appendChild(b);
 }
 
-/* ---------- 状态机 ---------- */
+/* ---------- 状态机：计数行代替动词文案，阶段感交给点的颜色与动画 ---------- */
 let running = false;
 let agentMode = localStorage.getItem("agentMode") || "research";
 for (const b of document.querySelectorAll(".mode-chip")) {
@@ -213,8 +215,21 @@ for (const b of document.querySelectorAll(".mode-chip")) {
   b.classList.toggle("on", b.dataset.mode === agentMode);
 }
 const setUI = (home, run) => { $("home").style.display = home; $("run").style.display = run; };
-const setDot = (cls, text) => { $("dot").className = "dot " + cls; $("statusText").textContent = text; };
+const setDot = (cls) => { $("dot").className = "dot " + cls; };
+const showErr = (msg) => { $("errbox").textContent = msg; $("errbox").style.display = "block"; };
+
+let roundN = 0, srcN = 0, text = "";
+const renderMeta = () => {
+  const parts = [];
+  if (roundN) parts.push("第 " + roundN + " 轮");
+  if (srcN) parts.push(srcN + " 来源");
+  if (text) parts.push(fmtK(text.length) + " 字");
+  $("meta").textContent = parts.join(" · ");
+};
+
 const addLog = (type, payload, cls) => {
+  $("logWrap").style.display = "block";
+  $("logCount").textContent = ($("log").children.length + 1) + " 事件";
   const d = document.createElement("div");
   if (cls) d.className = cls;
   d.textContent = `[${type}] ` + JSON.stringify(payload).slice(0, 160);
@@ -228,16 +243,23 @@ async function start() {
   $("go").disabled = true;
   setUI("none", "block");
   $("sources").innerHTML = ""; $("report").innerHTML = ""; $("log").innerHTML = "";
+  $("logWrap").style.display = "none"; $("logWrap").open = false; $("logCount").textContent = "";
   $("stats").innerHTML = ""; $("stats").style.display = "none";
-  $("reportCard").style.display = "none"; $("errbox").style.display = "none";
-  $("srcSect").style.display = "none"; $("thoughts").innerHTML = "";
-  setDot("run", "连接网关…");
+  $("reportDoc").style.display = "none"; $("errbox").style.display = "none";
+  $("thoughts").innerHTML = "";
+  roundN = 0; srcN = 0; text = ""; renderMeta();
+  setDot("run");
   $("barFill").style.width = "4%";
 
-  let text = "";
-  const render = () => {
+  /* delta 高频到达而渲染是全量重建——80ms 节流合并（open-webui #20878 的卡顿教训） */
+  let renderTimer = null;
+  const doRender = () => {
     $("report").innerHTML = md(text.replace(IMG_RE, "[图片已屏蔽]")) +
       (running ? '<span class="caret"></span>' : "");
+  };
+  const render = () => {
+    if (renderTimer) return;
+    renderTimer = setTimeout(() => { renderTimer = null; doRender(); }, 80);
   };
 
   try {
@@ -261,69 +283,71 @@ async function start() {
       }
     }
   } catch (err) {
-    setDot("err", "失败：" + err.message + " —— 确认网关已启动（uvicorn api.main:app）");
+    setDot("err");
+    // 同源 fetch 失败日常只有一种原因：网关没起。一句话说清，不再附运维命令。
+    showErr(/fetch/i.test(String(err && err.message)) ? "网关未启动" : "失败 · " + err.message);
   }
   running = false;
   $("go").disabled = false;
-  document.querySelector(".caret")?.remove();
+  if (renderTimer) { clearTimeout(renderTimer); renderTimer = null; }
+  doRender();  // 收尾渲染：去 caret，确保节流器手里最后一批 delta 一定上屏
 
   function handle(ev) {
     const p = ev.payload || {};
     addLog(ev.type, p, ev.type === "warning" ? "w" : ev.type === "error" ? "e" : "");
     switch (ev.type) {
       case "research_started":
-        if (p.provider_mode) $("modePill").textContent = p.provider_mode;
-        if (p.agent_mode) $("modePill").textContent = p.provider_mode + " · " + (p.agent_mode === "react" ? "ReAct" : "pipeline");
-        setDot("run", "规划中…"); $("barFill").style.width = "12%"; break;
+        if (p.provider_mode) $("modePill").textContent = p.agent_mode
+          ? p.provider_mode + " · " + (p.agent_mode === "react" ? "ReAct" : "pipeline")
+          : p.provider_mode;
+        $("barFill").style.width = "12%"; break;
       case "round_started":
-        $("roundText").textContent = "第 " + p.round + " 轮";
+        roundN = p.round;
         $("barFill").style.width = Math.min(15 + p.round * 18, 70) + "%";
-        setDot("run", "取证中…"); break;
+        renderMeta(); break;
       case "evidence_added": {
-        $("srcSect").style.display = "block";
+        srcN++;
         const el = document.createElement("span");
         el.className = "src " + p.source_type;
-        el.innerHTML = "<i></i>[" + p.eid + "] " + (p.title || p.locator || "").slice(0, 60);
+        // 事件 payload 来自外部检索结果，统一过 esc 再进 innerHTML（同报告渲染口径）
+        el.innerHTML = "<i></i><span class=\"eid\">" + p.eid + "</span>" +
+          esc(String(p.title || p.locator || "").slice(0, 60));
         el.title = p.locator || "";
         $("sources").appendChild(el);
-        setDot("run", "取证中 · 已 " + $("sources").children.length + " 条来源"); break;
+        renderMeta(); break;
       }
       case "report_delta":
-        $("reportCard").style.display = "block";  // 第一段到达即亮卡
-        text += p.text || ""; render();
-        setDot("run", "撰写报告 · " + text.length + " 字");
+        $("reportDoc").style.display = "block";  // 第一段到达即入文档态
+        text += p.text || ""; render(); renderMeta();
         $("barFill").style.width = "82%"; break;
       case "report_reset":
-        text = ""; $("report").innerHTML = ""; break;
+        text = ""; doRender(); renderMeta(); break;
       case "thought": {
-        $("thoughts").style.display = "block";
         const d = document.createElement("div");
         d.className = "thought";
-        d.innerHTML = "<b>" + (p.stage || "think") + "</b>" + (p.text || "");
+        d.innerHTML = "<b>" + esc(String(p.stage || "think")) + "</b>" + esc(String(p.text || ""));
         $("thoughts").appendChild(d);
         break;
       }
       case "warning":
         break;
       case "error":
-        setDot("err", "失败 · " + (p.msg || "未知错误")); break;
+        setDot("err");
+        showErr(p.msg || "未知错误"); break;
       case "done": {
         const c = p.citation_report || {};
         const tu = p.token_usage || {};
-        window.__tokens = Object.values(tu).reduce((a, b) => a + (b || 0), 0);
-        const bad = (c.unmapped || []).length > 0;
-        $("stats").style.display = "flex";
-        $("stats").innerHTML =
-          `<div><b>${c.refs_total ?? "-"}</b><span>引用出现</span></div>` +
-          `<div><b>${c.refs_unique ?? "-"}</b><span>去重编号</span></div>` +
-          `<div><b>${c.mapped ?? "-"}</b><span>可映射</span></div>` +
-          `<div><b>${c.evidence_total ?? "-"}</b><span>证据</span></div>` +
-          `<div${bad ? ' class="bad"' : ""}><b>${bad ? c.unmapped.length + " 个" : "全部映射"}</b><span>对账结论</span></div>` +
-          `<div><b>${window.__tokens ?? "-"}</b><span>tokens（粗估）</span></div>` +
-          `<div><b>${window.__tokens ?? "-"}</b><span>tokens（粗估）</span></div>`;
-        setDot("ok", "研究完成");
+        const tokens = Object.values(tu).reduce((a, b) => a + (b || 0), 0);
+        const unmapped = (c.unmapped || []).length;
+        let line = `<b>${c.refs_total ?? "-"}</b> 引用 · <b>${c.refs_unique ?? "-"}</b> 去重 · ` +
+          `<b>${c.mapped ?? "-"}</b> 映射 · <b>${c.evidence_total ?? "-"}</b> 证据 · ` +
+          `<b>${fmtK(tokens)}</b> tok`;
+        if (unmapped > 0) line += ` · <b class="bad">${unmapped}</b> 未映射`;
+        $("stats").innerHTML = line;
+        $("stats").style.display = "block";
+        setDot("ok");
         $("barFill").style.width = "100%";
-        $("roundText").textContent = ""; break;
+        break;
       }
     }
   }
@@ -338,10 +362,8 @@ $("q").addEventListener("input", (e) => {
   e.target.style.height = Math.min(e.target.scrollHeight, 160) + "px";
 });
 
-/* 首屏探活：网关不在就明确告知（否则用户对着静态页不知道差什么） */
-fetch("/api/health").then(r => r.json()).catch(() => {
-  setDot("err", "网关未启动：先运行 uvicorn api.main:app --port 8000");
-});
+/* 首屏探活：网关不在就提前亮红框——保留可诊断性，但不占用常态版面 */
+fetch("/api/health").then(r => r.json()).catch(() => showErr("网关未启动"));
 </script>
 </body>
 </html>
