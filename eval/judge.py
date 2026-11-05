@@ -55,7 +55,7 @@ def judge_support(pairs: list[dict]) -> float | None:
     for pair in pairs:
         try:
             resp = _build_chat(
-                "zhipu", ZHIPU_BASE_URL, settings.model_fallback,
+                "zhipu", ZHIPU_BASE_URL, settings.judge_model,
                 settings.zhipu_api_key, 0.0,
             ).invoke([
                 ("user", JUDGE_PROMPT.format(snippet=pair["snippet"], sentence=pair["sentence"])),

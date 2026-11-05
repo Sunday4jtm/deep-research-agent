@@ -83,3 +83,39 @@ def test_invoke链路挂callbacks(monkeypatch: pytest.MonkeyPatch):
     assert provider == "fake"
     assert captured["config"]["callbacks"] == []  # 关闭态：空列表但结构在
     get_settings.cache_clear()
+
+
+def test_run_trace贯穿与结束复位(monkeypatch: pytest.MonkeyPatch):
+    """一次研究 = 一个 trace（评审 P1）：run 上下文内的 handler 必须携带
+    trace_id；run 结束复位后回到孤立 trace，不串下一次研究。"""
+    from types import SimpleNamespace
+
+    import app.tracing as tracing_mod
+
+    captured: dict = {}
+
+    class _Stub:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setenv("LANGFUSE_ENABLED", "1")
+    get_settings.cache_clear()
+    monkeypatch.setattr(tracing_mod, "_ensure_masked_client", lambda: None)
+    monkeypatch.setattr(
+        "langfuse.get_client",
+        lambda: SimpleNamespace(create_trace_id=lambda: "a" * 32),
+    )
+    monkeypatch.setattr("langfuse.langchain.CallbackHandler", _Stub)
+
+    assert tracing_mod.start_run_trace() is True
+    try:
+        assert tracing_mod.callbacks() != []
+        assert captured.get("trace_context") == {"trace_id": "a" * 32}
+    finally:
+        tracing_mod.end_run_trace()
+        get_settings.cache_clear()
+
+    captured.clear()
+    tracing_mod.callbacks()
+    assert "trace_id" not in captured, "run 结束必须复位，不串下一次研究"
+    get_settings.cache_clear()

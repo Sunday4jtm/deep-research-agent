@@ -16,6 +16,7 @@ demo 语料本身已脱敏（mcp/load_demo_notes.py 的存在理由）。
 """
 from __future__ import annotations
 
+import contextvars
 import logging
 import re
 from typing import Any
@@ -23,6 +24,15 @@ from typing import Any
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
+
+# 一次研究的 run 级 trace 上下文（评审 P1"trace 不贯穿"）：run_research 开场
+# 生成父 trace_id 放进 ContextVar，callbacks() 据此给每次 LLM 调用挂
+# trace_context——同线程内所有调用落到同一个 trace，面板才能还原一次研究的
+# 完整链路。研究跑在专用线程里（Streamlit/网关/评测同一模式），ContextVar
+# 的线程隔离正好保证跨 run 不串。
+_run_trace: contextvars.ContextVar[dict | None] = contextvars.ContextVar(
+    "lf_run_trace", default=None
+)
 
 # 密钥样式：OpenAI 风格 sk-、Langfuse pk/sk-lf-、智谱 xxx.yyy 形态的兜底
 _SECRET_RE = re.compile(r"(?:sk|pk)-[A-Za-z0-9_-]{8,}")
@@ -59,14 +69,44 @@ def _ensure_masked_client() -> None:
         logger.warning("Langfuse 带掩码客户端注册失败，退化为默认客户端：%s", exc)
 
 
+def start_run_trace() -> bool:
+    """一次研究开一个父 trace。返回 True=已开启；未开启追踪或失败返回 False。
+
+    trace_context 的 {"trace_id": ...} 形态是 SDK 文档用法（CallbackHandler
+    docstring 示例）；create_trace_id 产出 32 位小写十六进制，符合 SDK 校验。
+    """
+    if not get_settings().tracing_enabled:
+        return False
+    try:
+        from langfuse import get_client
+
+        _run_trace.set({"trace_id": get_client().create_trace_id()})
+        return True
+    except Exception as exc:  # noqa: BLE001 —— 追踪层绝不影响主流程
+        logger.warning("Langfuse run trace 创建失败，本次退化为孤立 trace：%s", exc)
+        return False
+
+
+def end_run_trace() -> None:
+    """run 结束必须复位：同线程的下一次研究不清理就会串进旧 trace。"""
+    _run_trace.set(None)
+
+
 def callbacks() -> list:
-    """返回本次调用应挂的 callback 列表；未开启/初始化失败 → 空列表。"""
+    """返回本次调用应挂的 callback 列表；未开启/初始化失败 → 空列表。
+
+    run trace 上下文存在时，handler 以 trace_context 接入父 trace——
+    这是"全链路可追踪"能按一次研究聚合的关键。
+    """
     if not get_settings().tracing_enabled:
         return []
     _ensure_masked_client()
     try:
         from langfuse.langchain import CallbackHandler
 
+        ctx = _run_trace.get()
+        if ctx:
+            return [CallbackHandler(trace_context=ctx)]
         return [CallbackHandler()]
     except Exception as exc:  # noqa: BLE001
         logger.warning("Langfuse CallbackHandler 构建失败，本次不追踪：%s", exc)

@@ -40,6 +40,63 @@ def test_estimate_tokens_always_positive() -> None:
     assert estimate_tokens("") >= 1
 
 
+class _AllDead:
+    """①② 都打不通：with_structured_output 与 invoke 都抛。"""
+
+    def with_structured_output(self, schema, method=None):
+        raise RuntimeError("不支持 function_calling")
+
+    def invoke(self, messages):
+        raise RuntimeError("限流")
+
+
+class _StructuredDead:
+    """① 不支持、② 能吐 JSON：验证 ①→② 降级路径真实可达。"""
+
+    def with_structured_output(self, schema, method=None):
+        raise RuntimeError("不支持 function_calling")
+
+    def invoke(self, messages, **kwargs):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(content='{"sub_questions": ["a", "b"]}')
+
+
+def test_plan_全败降级模板且发warning(monkeypatch: pytest.MonkeyPatch) -> None:
+    """planner 静默降级是评审 P2：降级必须发 warning 让 UI 看见，档位如实上报。"""
+    import app.planner as planner_mod
+    from app.contracts import EVENT_WARNING, ListSink
+    from app.llm import _chat_cache_clear
+
+    monkeypatch.setattr(planner_mod, "_model_chain", lambda: [("fake", "u", "m", "k")])
+    monkeypatch.setattr(planner_mod, "_build_chat", lambda *a, **k: _AllDead())
+    sink = ListSink()
+    try:
+        subs, _usage, level = planner_mod.plan_subquestions("研究问题", sink=sink)
+        assert level == "template" and subs == ["研究问题"]
+        msgs = [e.payload["msg"] for e in sink.events if e.type == EVENT_WARNING]
+        assert any("JSON 抢救" in m for m in msgs), "①→② 降级必须可见"
+        assert any("模板兜底" in m for m in msgs), "②→③ 降级必须可见"
+    finally:
+        _chat_cache_clear()
+
+
+def test_plan_结构化失败抢救成功(monkeypatch: pytest.MonkeyPatch) -> None:
+    """② 存在的意义是接住①的格式崩——这条路径此前没有直接测试。"""
+    import app.planner as planner_mod
+    from app.contracts import ListSink
+    from app.llm import _chat_cache_clear
+
+    monkeypatch.setattr(planner_mod, "_model_chain", lambda: [("fake", "u", "m", "k")])
+    monkeypatch.setattr(planner_mod, "_build_chat", lambda *a, **k: _StructuredDead())
+    sink = ListSink()
+    try:
+        subs, _usage, level = planner_mod.plan_subquestions("研究问题", sink=sink)
+        assert level == "json-rescue" and subs == ["a", "b"]
+    finally:
+        _chat_cache_clear()
+
+
 def test_plan_falls_back_to_template_without_keys(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -50,9 +107,10 @@ def test_plan_falls_back_to_template_without_keys(
     monkeypatch.delenv("ZHIPU_API_KEY", raising=False)
     get_settings.cache_clear()
     try:
-        subs, usage = plan_subquestions("研究问题", "")
+        subs, usage, level = plan_subquestions("研究问题", "")
         assert subs == ["研究问题"]
         assert usage["planner"] >= 1
+        assert level == "template"
     finally:
         get_settings.cache_clear()
         _chat_cache_clear()

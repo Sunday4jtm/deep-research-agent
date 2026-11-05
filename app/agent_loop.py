@@ -129,9 +129,15 @@ class _ReactLoop:
                 continue
             lines.append(f"[{ev.eid}] {ev.title}：{ev.snippet[:160]}")
         if not lines:
+            if not hits:
+                return (
+                    "没有找到相关结果。考虑：换更具体的关键词、换一个工具，"
+                    "或用 web_fetch 抓取上面某条来源的正文。"
+                )
+            # 全部命中已有证据 ≠ 没找到结果：误导文案会让模型白白换查询（评审 P3）
             return (
-                "没有找到相关结果。考虑：换更具体的关键词、换一个工具，"
-                "或用 web_fetch 抓取上面某条来源的正文。"
+                "本次结果都已登记过（无新增）。考虑：换更具体的关键词、"
+                "换一个工具，或用 web_fetch 读透某条来源。"
             )
         return "已登记证据：\n" + "\n".join(lines)
 

@@ -71,14 +71,15 @@ def make_plan_node(sink: EventSink):
             # 延迟 import：template 模式（离线测试）不应该碰 LLM 模块
             from app.planner import plan_subquestions
 
-            sub_questions, usage = plan_subquestions(
-                state["question"], state.get("focus", ""), memories
+            sub_questions, usage, plan_level = plan_subquestions(
+                state["question"], state.get("focus", ""), memories, sink
             )
         else:
             from app.planner import template_plan
 
             sub_questions = template_plan(state["question"])
             usage = {"planner": 0}
+            plan_level = "template"
         sink.emit(
             AgentEvent(
                 EVENT_THOUGHT,
@@ -97,7 +98,8 @@ def make_plan_node(sink: EventSink):
                 {
                     "node": "planner",
                     "subq": len(sub_questions),
-                    "mode": settings.planner_mode,
+                    # 实际档位：配置值此前掩盖降级——模板兜底时 UI 显示 "llm"（评审 P2）
+                    "mode": plan_level,
                 },
             )
         )

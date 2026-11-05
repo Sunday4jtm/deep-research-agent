@@ -25,6 +25,7 @@ class Settings:
     zhipu_api_key: str
     model_main: str          # 主力 chat 模型，P0 预检后定稿
     model_fallback: str      # 兜底 chat 模型（国产免费模型高峰限流是常态，见老项目结论）
+    judge_model: str         # 裁判专用模型（智谱端点）：MODEL_FALLBACK 换别家时裁判不跟着坏
     sensenova_api_key: str   # 过渡期 LLM（公测免费，5h/1500次）；DeepSeek 到位后退二线
     sensenova_base_url: str
     sensenova_model: str     # 模型名以 platform.sensenova.cn 控制台为准
@@ -72,6 +73,7 @@ def get_settings() -> Settings:
         zhipu_api_key=_env("ZHIPU_API_KEY"),
         model_main=_env("MODEL_MAIN", "deepseek-chat"),
         model_fallback=_env("MODEL_FALLBACK", "glm-4-flash"),
+        judge_model=_env("JUDGE_MODEL", "glm-4-flash"),
         sensenova_api_key=_env("SENSENOVA_API_KEY"),
         sensenova_base_url=_env("SENSENOVA_BASE_URL", "https://api.sensenova.cn/compatible-mode/v1"),
         sensenova_model=_env("SENSENOVA_MODEL", "SenseChat-5"),

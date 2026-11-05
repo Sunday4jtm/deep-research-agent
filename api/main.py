@@ -108,10 +108,12 @@ def research(req: ResearchRequest) -> StreamingResponse:
     thread.start()
 
     def stream():
+        empty_polls = 0
         while True:
             try:
                 event = q.get(timeout=_QUEUE_POLL_SECONDS)
             except queue.Empty:
+                empty_polls += 1
                 if not thread.is_alive() and q.empty():
                     # 线程死了却没留下终止事件（理论上 _run_in_thread 兜不住的
                     # 极端情况）：补 error 收尾，客户端不能挂在无限等待上。
@@ -123,6 +125,11 @@ def research(req: ResearchRequest) -> StreamingResponse:
                         )
                     )
                     return
+                if empty_polls % 30 == 0:
+                    # 空闲心跳（约 15s 一次）：LLM 分钟级静默期不发任何字节，
+                    # 会被带 idle timeout 的反向代理掐断——注释此前声称"心跳感"
+                    # 却没实现（评审 P3）。SSE 注释帧客户端不解析、连接保活。
+                    yield ": ping\n\n"
                 continue
             yield _sse_frame(event)
             if event.type in (EVENT_DONE, EVENT_ERROR):

@@ -141,9 +141,20 @@ def main() -> None:
     parser.add_argument("--skip-judge", action="store_true", help="跳过 LLM 裁判（省时）")
     args = parser.parse_args()
 
+    modes = [m.strip() for m in args.modes.split(",")]
+    bad_modes = [m for m in modes if m not in {"single", "multi"}]
+    if bad_modes:
+        # 旧实现对任何非 single 值静默按 multi 跑（评审 P3）：模式语义必须精确
+        parser.error(f"--modes 非法值 {bad_modes}（可选 single/multi）")
+    known_kinds = {q.kind for q in QUESTIONS}
+    wanted = {k.strip() for k in args.kinds.split(",") if k.strip()} if args.kinds else set()
+    if wanted:
+        unknown = wanted - known_kinds
+        if unknown:
+            # 旧实现拼错 kind 静默产 0 题空表（评审 P3）
+            parser.error(f"--kinds 非法值 {sorted(unknown)}（合法：{sorted(known_kinds)}）")
     questions = QUESTIONS[: args.limit or None]
-    if args.kinds:
-        wanted = {k.strip() for k in args.kinds.split(",")}
+    if wanted:
         questions = [q for q in questions if q.kind in wanted]
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     out_dir = Path(args.out)
@@ -153,7 +164,7 @@ def main() -> None:
 
     all_runs: list[dict] = []
     for q in questions:
-        for mode in args.modes.split(","):
+        for mode in modes:
             for repeat in range(args.repeat):
                 try:
                     run = run_one(q, mode)

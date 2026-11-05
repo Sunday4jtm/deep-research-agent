@@ -13,7 +13,9 @@ from app.planner import plan_subquestions
 
 @pytest.mark.slow
 def test_live_planner_structured_output() -> None:
-    subs, usage = plan_subquestions("bge 和 m3e 在中文检索场景怎么选？", focus="本地 CPU 部署")
+    subs, usage, _level = plan_subquestions(
+        "bge 和 m3e 在中文检索场景怎么选？", focus="本地 CPU 部署"
+    )
     assert 1 <= len(subs) <= 4
     assert all(isinstance(s, str) and s.strip() for s in subs)
     assert usage["planner"] >= 1

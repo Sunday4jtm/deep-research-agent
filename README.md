@@ -90,6 +90,10 @@ uvicorn api.main:app --port 8000
 姊妹仓库（MCP Server A/B 与老后端）的启动见 `AGENTS.md` 代码地图；
 `PROVIDER_MODE=fake` 时全部离线，零 Key 可跑通整个界面。
 
+> 提示：pre-commit 钩子的 ruff/pytest 两条 entry 钉了作者本机解释器路径
+> （原因见 [.pre-commit-config.yaml](.pre-commit-config.yaml) 头注释）——
+> clone 后改成自己的环境路径即可，密钥扫描钩子与路径无关。
+
 ## 评测（D10，10 题 case study）
 
 ```bash

@@ -1,6 +1,8 @@
 # 钩子命令钉绝对路径：git hook 运行时的 PATH 指向 conda base（3.13，无项目依赖），
 # 而项目依赖装在 agent-research（3.12）——不钉路径就会用错解释器（D1 实测踩坑）。
 # 若日后换环境名，这里必须同步修改。
+# 克隆者注意：ruff/pytest 两条 entry 钉的是作者本机解释器路径——clone 后请改
+# 成自己的环境路径再 pre-commit install（密钥扫描那条与路径无关，任何环境能跑）。
 repos:
   - repo: local
     hooks:

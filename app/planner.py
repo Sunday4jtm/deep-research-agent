@@ -14,7 +14,9 @@ import re
 
 from pydantic import BaseModel, Field
 
+from app.contracts import EVENT_WARNING, AgentEvent, EventSink
 from app.llm import _build_chat, _model_chain, estimate_tokens
+from app.tracing import callbacks as tracing_callbacks
 
 logger = logging.getLogger(__name__)
 
@@ -84,14 +86,28 @@ def template_plan(question: str) -> list[str]:
 
 
 def plan_subquestions(
-    question: str, focus: str = "", memories: list[dict] | None = None
-) -> tuple[list[str], dict[str, int]]:
-    """入口：永不向上抛异常（③兜底保证）。返回 (子问题, token_usage)。
+    question: str,
+    focus: str = "",
+    memories: list[dict] | None = None,
+    sink: EventSink | None = None,
+) -> tuple[list[str], dict[str, int], str]:
+    """入口：永不向上抛异常（③兜底保证）。返回 (子问题, token_usage, 实际档位)。
 
     memories（v2.3）：跨 run 记忆召回结果，注入 prompt 作参考素材——
     明确标注"仅供参考勿照抄"，防止旧研究结论污染新拆解。
+    sink：传入则降级必发 EVENT_WARNING——synthesizer 早就知道"降级要让
+    用户看见"，planner 此前静默降级，主备全限流时 UI 在规划点干等几分钟
+    零反馈（评审 P2）；同一套哲学不该有两个标准。实际档位也随返回值上抛，
+    node_finished 报真实档位而不是配置值。
     """
     chain = _model_chain()
+
+    def _warn(msg: str) -> None:
+        if sink is not None:
+            sink.emit(
+                AgentEvent(EVENT_WARNING, {"where": "planner/fallback", "msg": msg[:160]})
+            )
+
     user_text = f"研究问题：{question}"
     if focus:
         user_text += f"\n用户补充的关注点：{focus}（拆解时覆盖这个角度）"
@@ -109,29 +125,34 @@ def plan_subquestions(
         try:
             llm = _build_chat(provider, base_url, model, api_key, 0.0)
             structured = llm.with_structured_output(SubQuestions, method="function_calling")
-            result = structured.invoke(messages)
+            result = structured.invoke(messages, config={"callbacks": tracing_callbacks()})
             cleaned = _clean(result.sub_questions)
             if cleaned:
                 logger.info("planner ① 成功：%s/%s → %d 条", provider, model, len(cleaned))
-                return cleaned, {"planner": estimate_tokens(str(cleaned))}
+                return cleaned, {"planner": estimate_tokens(str(cleaned))}, "structured"
         except Exception as exc:  # 限流/格式飘了都降下一级，不中断
             logger.warning("planner ① 失败（%s/%s）：%s", provider, model, exc)
+
+    if chain:
+        _warn("① 结构化输出全败，降级 ② JSON 抢救")
 
     # ② 普通调用 + JSON 抢救
     for provider, base_url, model, api_key in chain:
         try:
             llm = _build_chat(provider, base_url, model, api_key, 0.0)
-            resp = llm.invoke(messages)
+            resp = llm.invoke(messages, config={"callbacks": tracing_callbacks()})
             cleaned = extract_json(str(resp.content))
             if cleaned:
                 logger.info("planner ② 成功：%s/%s → %d 条", provider, model, len(cleaned))
-                return cleaned, {"planner": _usage_from(resp)}
+                return cleaned, {"planner": _usage_from(resp)}, "json-rescue"
         except Exception as exc:
             logger.warning("planner ② 失败（%s/%s）：%s", provider, model, exc)
 
     # ③ 模板兜底：链路空（无 Key）或 ①②全败都到这里
     if not chain:
         logger.warning("planner：未配置任何模型 Key，走模板兜底")
+        _warn("未配置任何模型 Key，本次规划是单子问题直通")
     else:
         logger.warning("planner ①② 全败，走模板兜底")
-    return template_plan(question), {"planner": estimate_tokens(question)}
+        _warn("①② 全败，走模板兜底：本次规划是单子问题直通，检索覆盖面收窄")
+    return template_plan(question), {"planner": estimate_tokens(question)}, "template"

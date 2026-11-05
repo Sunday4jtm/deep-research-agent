@@ -22,6 +22,7 @@ from app.graph.nodes import (
     make_verify_node,
 )
 from app.graph.state import ResearchState
+from app.tracing import end_run_trace, start_run_trace
 from app.tracing import flush as flush_tracing
 
 
@@ -64,6 +65,10 @@ def run_research(
     是契约里 error{code,msg} 的存在意义：失败也是事件流的一部分。
     """
     active_sink = sink if sink is not None else ListSink()
+    # 一次研究 = 一个父 trace（评审 P1"trace 不贯穿"）：后续所有 LLM 调用的
+    # callbacks 经 ContextVar 携带 trace_context；研究全程在当前线程内执行，
+    # ContextVar 隔离保证并发 run 不串
+    start_run_trace()
     # provider_mode 进首事件：UI 据此亮"离线演示"徽标——fake 模式的证据长得
     # 跟真的一样，不讲明来源，现场演示忘切配置就会拿固定台词当真数据（评审 P2-10）
     active_sink.emit(
@@ -99,8 +104,10 @@ def run_research(
         raise
     finally:
         # 追踪冲刷放 finally：崩溃路径的 trace（含 error 现场）同样要落云，
-        # 排障时最值钱的恰恰是失败 trace（D9）
+        # 排障时最值钱的恰恰是失败 trace（D9）；run 上下文必须复位——同线程
+        # 的下一次研究不清理就会串进旧 trace
         flush_tracing()
+        end_run_trace()
     # 跨 run 记忆沉淀（v2.3）：learnings + 来源清单落 data/memory/（gitignored）
     from app import memory as app_memory
 
