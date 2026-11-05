@@ -18,8 +18,10 @@ else
 fi
 [[ -z "$files" ]] && exit 0
 
-pattern='sk-[A-Za-z0-9]{16,}|[a-f0-9]{32,}|[A-Za-z0-9]{28}\.[A-Za-z0-9]{8}'
-hits=$(echo "$files" | xargs grep -InE "$pattern" 2>/dev/null || true)
+# 模式盲区收口（评审 P2）：补 GitHub/AWS/PEM 形态；xargs 改 -0（按空白切
+# 文件名会漏扫/误扫含空格路径）
+pattern='sk-[A-Za-z0-9]{16,}|[a-f0-9]{32,}|[A-Za-z0-9]{28}\.[A-Za-z0-9]{8}|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{40,}|AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----'
+hits=$(printf '%s\n' "$files" | tr '\n' '\0' | xargs -0 grep -InE "$pattern" 2>/dev/null || true)
 if [[ -n "$hits" ]]; then
   echo "❌ 疑似密钥泄漏，提交被阻止："
   echo "$hits"

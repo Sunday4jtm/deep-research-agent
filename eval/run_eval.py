@@ -48,13 +48,23 @@ def run_one(q, mode: str) -> dict:
     # 禁用哨兵，必须与「变量不存在」区分开——旧实现按 falsy 判断，空串哨兵被
     # 当成未设置再 pop 一次，整个 pytest 进程的隔离就被第一次 run_one 拆掉
     # （评审 P0-2，磁盘实证：runs.jsonl 曾积累 122 条夹具条目）
-    touched = ("MAX_ROUNDS", "PLANNER_MODE", "DEEPSEEK_API_KEY", "MEMORY_ENABLED")
+    touched = (
+        "MAX_ROUNDS",
+        "PLANNER_MODE",
+        "DEEPSEEK_API_KEY",
+        "MEMORY_ENABLED",
+        "AGENT_MODE",
+    )
     original = {name: os.environ.get(name) for name in touched}
     os.environ["MAX_ROUNDS"] = "1" if mode == "single" else "3"
     if q.kind in FIXTURE_KINDS:
         # 夹具题整条链路钉死：planner 也走 template（单子问题直通）——
         # LLM 拆解出的子问题措辞不可控，剧本证据匹配不上，指标就不是同一把尺子
         os.environ["PLANNER_MODE"] = "template"
+    # 评测协议只定义在流水线范式上：AGENT_MODE 显式钉死——夹具 patch 的是
+    # nodes.get_provider，AGENT_MODE=react 时 provider 解析在 agent_loop
+    # 命名空间，ScriptedProvider 会静默失效、夹具题真联网（评审 P1）
+    os.environ["AGENT_MODE"] = "research"
     # 免费保障（用户指示 2026-11-02）：评测全程禁用 DeepSeek（计费），
     # chat 自动落到商汤公测免费档；恢复后仅影响本进程，.env 原样。
     # 夹具跑分也不得写跨 run 记忆：必须显式置 "0"。为什么不能 pop——config
@@ -145,7 +155,26 @@ def main() -> None:
     for q in questions:
         for mode in args.modes.split(","):
             for repeat in range(args.repeat):
-                run = run_one(q, mode)
+                try:
+                    run = run_one(q, mode)
+                except Exception as exc:  # noqa: BLE001 —— 单题崩溃不让整批报废
+                    # 一次 provider 抖动此前会让后续题目全部不跑、summary 不
+                    # 生成（评审 P2）；jsonl 增量写已保住已跑部分，这里补错误行
+                    print(
+                        f"  {q.qid}({q.kind}) {mode}#{repeat + 1}: 崩溃 "
+                        f"{type(exc).__name__}: {exc}",
+                        flush=True,
+                    )
+                    all_runs.append(
+                        {
+                            "qid": q.qid,
+                            "kind": q.kind,
+                            "mode": mode,
+                            "repeat": repeat,
+                            "error": f"{type(exc).__name__}: {exc}"[:200],
+                        }
+                    )
+                    continue
                 run["repeat"] = repeat
                 all_runs.append(run)
                 exist = run["citation_existence"]
@@ -162,6 +191,9 @@ def main() -> None:
     if not args.skip_judge:
         # 引用支撑率：抽样 ≤5 对/题，智谱裁判（Key 缺席返回 None=N/A）
         for run in all_runs:
+            if "error" in run:
+                run["support_rate"] = None
+                continue
             pairs = sample_citation_pairs(run["report"], run["evidence_pairs"])
             run["support_rate"] = judge_support(pairs) if pairs else None
         # 裁判结果回写 jsonl：run 循环先写文件、裁判后算——不回写就丢了（实测踩过）
@@ -184,6 +216,12 @@ def main() -> None:
         "|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for r in all_runs:
+        if "error" in r:
+            lines.append(
+                f"| {r['qid']} | {r['kind']} | {r['mode']}#{r['repeat'] + 1} "
+                f"| ERROR {r['error'][:60]} |" + " |" * 7
+            )
+            continue
         lat = r.get("latency") or {}
         lat_s = (
             f"{lat.get('p50', 0) * 1000:.0f}/{lat.get('p95', 0) * 1000:.0f}"

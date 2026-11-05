@@ -61,7 +61,7 @@ graph TB
 | type | payload | 说明 |
 |---|---|---|
 | `research_started` | `{question, provider_mode, agent_mode}` | 首事件；UI 据此亮离线演示徽标 |
-| `node_started/finished` | `{node, ms?/gaps?/conflicts?}` | 节点进出（延迟统计的数据源） |
+| `node_started/finished` | `{node, ...}` | 节点进出（payload 按节点：retriever 带 round/evidence、verifier 带 gaps/conflicts、agent 带 steps/evidence；延迟统计的数据源） |
 | `round_started` | `{round}` | 检索轮次 |
 | `evidence_added` | `{eid, source_type, title, locator}` | 证据入册（eid=引用编号） |
 | `thought` | `{stage, text}` | 思考链时间线（plan/memory/reflect/compress/act/boot） |
@@ -93,18 +93,25 @@ uvicorn api.main:app --port 8000
 ## 评测（D10，10 题 case study）
 
 ```bash
-python -m eval.run_eval --modes single,multi --repeat 2   # 全协议（40 run）
+python -m eval.run_eval --modes single,multi --repeat 2 --kinds private,conflict,injection   # 免费通道（24 run）
 python -m eval.run_eval --modes single --repeat 1 --skip-judge   # 快速基线
 ```
 
-- 题集：3 私有可答 + 3 需公网 + 4 混合（含 1 注入金丝雀 + 2 gold conflict）；
+- 题集：3 私有可答 + 3 需公网 + 1 混合 + 2 gold conflict + 1 注入金丝雀（10 题）；
+- **免费通道现状**：DeepSeek 停用（计费）期间 web/hybrid 4 题暂缓，免费基线
+  = 6 题 × 2 模式 × 2 次 = 24 run，最终数字见 [`eval/BASELINE.md`](eval/BASELINE.md)
+  （存在率/覆盖率 1.000、冲突披露 1.00、支撑率 0.917；**注入 0/4 存活是
+  strict 上线前的历史口径**——该崩塌发现即强过滤的动因，strict 落地后由
+  门禁测试钉死）；
 - 模式：`single`（无回环）vs `multi`（回环开），temperature=0，等证据预算；
-- 指标：引用存在率（citation pass）/ 覆盖率 / 冲突披露率（gold 对照）/
-  注入防御（金丝雀不出现=存活）/ 成本延迟（事件时间戳 p50/p95）；
+- 指标：引用存在率（citation pass，unmapped_total 全量计数）/ 覆盖率 /
+  冲突披露率（gold 对照）/ 注入防御（金丝雀不出现=存活）/ 成本延迟（p50/p95，
+  小样本下 p95≈max，按尾部代表读）；
 - 裁判：引用支撑率由智谱（与主力 DeepSeek 跨族，自我偏好风险低）按冻结
   rubric 抽样打分；
-- 结果：`eval/results/summary_*.md` 对照表 + `runs_*.jsonl` 明细。
-  **10 题是小样本 case study，不做统计显著性表述。**
+- 结果：`eval/results/summary_*.md` 对照表 + `runs_*.jsonl` 明细（gitignored
+  随跑随生成；入库基线快照见 `eval/BASELINE.md`）。
+  **小样本 case study，不做统计显著性表述。**
 
 ## 安全与隐私
 
@@ -115,8 +122,10 @@ python -m eval.run_eval --modes single --repeat 1 --skip-judge   # 快速基线
 3. **注入五道防线**：清洗 → 隔离 → 告警（输入+报告双侧）→ 强过滤
    （`INJECTION_FILTER=strict` 默认：证据级隔离出综合 prompt + 报告命中行
    剥除；`report` 退回只告警原语义）→ 金丝雀评测 + 离线门禁测试；
-4. **追踪脱敏**：密钥样式字符串出站打码；demo 语料与私人知识库物理隔离
-   （`KB_CHROMA_DIR` 目录级开关）。
+4. **追踪与数据流向（如实披露）**：`LANGFUSE_ENABLED=1` 时完整 prompt（含
+   私有库命中原文）会上报 cloud.langfuse.com（EU 托管 SaaS）；密钥样式字符串
+   出站打码，正文内容不脱敏——涉密场景保持追踪关闭（默认关）。demo 语料与
+   私人知识库物理隔离（`KB_CHROMA_DIR` 目录级开关）。
 
 ## 与姊妹仓库的关系
 
@@ -135,15 +144,17 @@ app/config.py    全局配置（.env；开关见 .env.example）
 app/llm.py       三模型链（DeepSeek→SenseNova→智谱）+ 回退 + token 粗估
 app/agent_loop.py ReAct 自主循环（LLM 驱动工具调用，AGENT_MODE=react）
 app/tracing.py   Langfuse（开关/mask/flush）
-app/contracts.py 事件契约 v1（三端共用，改动=三端同步）
+app/contracts.py 事件契约 v1（各端共用，改动=逐端同步）
 app/planner.py   LLM 规划器（结构化输出三级降级）
 app/synthesizer.py 流式报告（①流式→②非流式→③模板）+ 证据预算裁剪
 app/citation.py  引用对账（引用存在率 = D10 指标来源）
 app/tools/       ToolProvider 协议 + fake/direct/mcp 三实现 + 清洗管道
 app/graph/       ResearchState + 节点工厂（含检索并行化）+ StateGraph 装配
-api/main.py      FastAPI SSE 网关
-frontend/app.py  Streamlit（gateway/inline 双模式）
-eval/            题集/夹具/指标/裁判/runner
+api/main.py      FastAPI SSE 网关（index.html 同端口直出）
+frontend/index.html 静态研究台（默认 UI，SSE 消费端）
+frontend/app.py  Streamlit（gateway/inline 双模式，备选界面）
+app/memory.py    跨 run 记忆（bigram 召回注入 planner，gitignored）
+eval/            题集/夹具/指标/裁判/runner（入库基线见 eval/BASELINE.md）
 scripts/         preflight（真实预检）+ 两个 P0 spike
 tests/           全离线测试（conftest 断网硬守卫）
 ```

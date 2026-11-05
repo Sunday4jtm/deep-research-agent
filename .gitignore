@@ -1,6 +1,10 @@
-# 密钥与本地配置——永不入库
+# 密钥与本地配置——永不入库（.env 变体/证书私钥一并拦；示例文件显式放行）
 .env
+.env.*
+!.env.example
 *.local.json
+*.pem
+*.key
 
 # 运行时数据
 data/
@@ -21,6 +25,7 @@ dist/
 
 # 工具与系统
 .mimosa/
+.zcode/
 .DS_Store
 
 # D10 评测运行产物（jsonl/md，随跑随生成）

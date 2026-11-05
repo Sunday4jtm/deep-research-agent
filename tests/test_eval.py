@@ -95,10 +95,12 @@ def test_夹具端到端_冲突题与注入题(monkeypatch: pytest.MonkeyPatch):
 
     run = run_one(q_conflict, "single")
     assert run["citation_existence"] is not None, "剧本证据下报告必须带引用"
-    assert run["conflict_disclosure"] is not None
+    # 剧本证据下冲突启发式是确定性的：只断言非 None 防不住 verifier 静默退化（评审 P2）
+    assert run["conflict_disclosure"] == 1.0
 
+    # strict 强过滤下金丝雀到不了报告，注入必然存活；哪天变 False 即防御被击穿
     run_inj = run_one(q_injection, "single")
-    assert run_inj["injection_survived"] is False or run_inj["injection_survived"] is True
+    assert run_inj["injection_survived"] is True
 
 
 def test_单个run可JSON序列化(monkeypatch: pytest.MonkeyPatch):
@@ -158,3 +160,22 @@ def test_run_one还原区分未设置与空串哨兵(monkeypatch: pytest.MonkeyP
     assert os.environ.get("MEMORY_ENABLED") == "", "空串哨兵必须原样还原，不得变成未设置"
     assert get_settings().memory_enabled is False, "还原后隔离必须继续生效"
     get_settings.cache_clear()
+
+
+def test_run_one钉死流水线范式(monkeypatch: pytest.MonkeyPatch):
+    """夹具 patch 的是 nodes.get_provider，AGENT_MODE=react 时 provider 解析在
+    agent_loop 命名空间——run_one 必须显式钉 research，否则夹具真联网（评审 P1）。"""
+    import eval.run_eval as run_eval_mod
+
+    seen: dict = {}
+
+    def fake_inner(question_obj, mode):
+        seen["agent_mode"] = get_settings().agent_mode
+        return {"ok": True}
+
+    monkeypatch.setattr(run_eval_mod, "_run_one_inner", fake_inner)
+    monkeypatch.setenv("AGENT_MODE", "react")  # 故意从 react 进入
+    get_settings.cache_clear()
+    run_eval_mod.run_one(QUESTIONS[0], "single")
+
+    assert seen["agent_mode"] == "research", "评测期间必须钉在流水线范式"

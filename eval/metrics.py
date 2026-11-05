@@ -71,6 +71,9 @@ def latency_stats(events: list[AgentEvent]) -> dict[str, float]:
         return {}
     durations.sort()
     n = len(durations)
+    # 口径如实（评审 P2）：nearest-rank 在小样本下 p95 基本落在末位——每 run
+    # 节点数只有 8~12 个，p95≈max（通常就是 synthesizer 的模型本质延迟），
+    # 对照表里这一列按「尾部代表」读，不要当统计分位数
     return {
         "p50": durations[n // 2],
         "p95": durations[min(n - 1, int(n * 0.95))],

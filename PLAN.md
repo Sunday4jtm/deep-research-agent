@@ -89,8 +89,8 @@ class ResearchState(TypedDict):
 ### 3.3 事件契约 v1（D5 定义，D8 落 FastAPI SSE）
 
 ```
-research_started{question, provider_mode, agent_mode} / node_started{node} / node_finished{node,ms}
-round_started{n} / evidence_added{source_type,id,标题}
+research_started{question, provider_mode, agent_mode} / node_started{node} / node_finished{node,...}
+round_started{round} / evidence_added{eid, source_type, title, locator}
 report_delta{text} / report_reset{} / thought{stage,text} / warning{where,...} / done{citation_report, token_usage} / error{code,msg}
 ```
 - research_started 自 D8 评审修复起带 provider_mode（UI 据此亮"离线演示"徽标），
