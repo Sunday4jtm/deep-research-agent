@@ -1,4 +1,5 @@
-"""事件契约 v1（PLAN §3.3）——三套 UI 共用同一份定义（AGENTS.md 硬红线）。
+"""事件契约 v1（PLAN §3.3）——各套 UI 共用同一份定义（AGENTS.md 硬红线；
+现有静态研究台与 Streamlit 两端消费，Next.js 为预留端）。
 
 为什么 payload 一律是 JSON 可序列化的 dict：事件要跨 FastAPI SSE 网关出网，
 任何 dataclass 私有结构都会在序列化边界上翻车；字符串常量三端按字面匹配，

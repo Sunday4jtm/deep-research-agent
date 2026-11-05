@@ -13,6 +13,12 @@ create_agent 风格——本模块补齐后，"两层抽象对比"升级为"三�
 
 引用纪律：工具结果进入证据册时自动编号 [E#]，观察文本里带编号回给模型，
 模型自然引用 → citation pass 原样生效，零特判。
+
+健壮性与可观测（2026-11-05 评估修正）：单步调用逐 provider 降级、全败才
+抛（此前只取 chain[0]，主模型限流即死且无兜底），并挂 Langfuse trace
+（此前显式空 callbacks，ReAct 全程不可观测）；INJECTION_FILTER=strict 时
+命中注入特征的证据入册但观察文本脱敏——隔离必须发生在进消息之前，
+因为观察文本就是模型的直接输入。
 """
 from __future__ import annotations
 
@@ -36,7 +42,8 @@ from app.contracts import (
 from app.llm import _build_chat, _model_chain, estimate_tokens
 from app.tools import get_provider
 from app.tools.base import Evidence
-from app.tools.sanitize import sanitize_web_text
+from app.tools.sanitize import detect_injection, sanitize_web_text, strip_injected_lines
+from app.tracing import callbacks as tracing_callbacks
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +93,6 @@ class _ReactLoop:
                 snippet=sanitize_web_text(hit.snippet),
             )
             self.evidence.append(ev)
-            lines.append(f"[{ev.eid}] {ev.title}：{ev.snippet[:160]}")
             self.sink.emit(
                 AgentEvent(
                     EVENT_EVIDENCE_ADDED,
@@ -98,6 +104,29 @@ class _ReactLoop:
                     },
                 )
             )
+            # strict 注入过滤（与流水线 _quarantine_flagged 同哲学）：证据册
+            # 保留原文（与流水线 state.evidence 同口径，可人工核读），但观察
+            # 文本只给标题不给内容——模型看不到指令就不会执行，报告侧剥除
+            # 只作绕过兜底。与流水线的口径差异（如实）：流水线把隔离证据
+            # 记为"不可引用"（不在对账账册），这里 eid 对模型可见、引用合法
+            # ——它至少看到了"这条来源存在"。
+            flags = detect_injection(ev.snippet)
+            strict = flags and get_settings().injection_filter == "strict"
+            if strict:
+                self.sink.emit(
+                    AgentEvent(
+                        EVENT_WARNING,
+                        {
+                            "where": "injection-quarantine",
+                            "eids": [ev.eid],
+                            "locator": hit.locator[:80],
+                            "hint": "命中注入特征：证据入册，但内容不进模型观察",
+                        },
+                    )
+                )
+                lines.append(f"[{ev.eid}] {ev.title}：（该来源命中注入特征，内容已隔离）")
+                continue
+            lines.append(f"[{ev.eid}] {ev.title}：{ev.snippet[:160]}")
         if not lines:
             return (
                 "没有找到相关结果。考虑：换更具体的关键词、换一个工具，"
@@ -146,14 +175,48 @@ class _ReactLoop:
 
         return [web_search, kb_search, web_fetch]
 
+    def _invoke_step(self, bound: list, messages: list):
+        """单步调用：主备逐个试 + Langfuse trace，全败才抛。
+
+        此前这里显式传 config={"callbacks": []}，ReAct 全程不可观测（评估
+        P1 项）；现在与流水线口径一致挂 tracing_callbacks()——开关关闭时
+        返回空列表，离线测试零风险。
+        """
+        errors: list[str] = []
+        for provider_name, llm in bound:
+            try:
+                return llm.invoke(messages, config={"callbacks": tracing_callbacks()})
+            except Exception as exc:  # 限流/网络/Key 问题降下一个，不中断循环
+                errors.append(f"{provider_name}: {type(exc).__name__}")
+                logger.warning("ReAct 模型调用失败，切换下一个：%s - %s", provider_name, exc)
+                self.sink.emit(
+                    AgentEvent(
+                        EVENT_WARNING,
+                        {
+                            "where": "react/failover",
+                            "error": f"{type(exc).__name__}: {exc}"[:120],
+                        },
+                    )
+                )
+        raise RuntimeError("主备模型均失败（ReAct）：" + " | ".join(errors))
+
     def run(self, max_steps: int) -> dict:
         chain = _model_chain()
         if not chain:
             raise RuntimeError("未配置任何模型 Key：ReAct 模式需要至少一个 chat Key")
-        provider_name, base_url, model, api_key = chain[0]
-        llm = _build_chat(provider_name, base_url, model, api_key, 0.0).bind_tools(
-            self._tools()
-        )
+        # 每个候选模型预绑定工具（bind_tools 产物依赖 provider，不能走
+        # lru_cache）；单步内逐 provider 降级、全败才抛——与
+        # invoke_with_fallback 同口径。此前只取 chain[0]，主模型高峰限流
+        # 时 ReAct 直接死（评估 P1 项）。
+        tools = self._tools()
+        bound = []
+        for provider_name, base_url, model, api_key in chain:
+            bound.append(
+                (
+                    provider_name,
+                    _build_chat(provider_name, base_url, model, api_key, 0.0).bind_tools(tools),
+                )
+            )
 
         focus_line = f"\n用户关注点（优先覆盖）：{self.focus}" if self.focus else ""
         messages: list = [
@@ -169,7 +232,7 @@ class _ReactLoop:
         )
         report = ""
         for self.steps in range(1, max_steps + 1):
-            resp = llm.invoke(messages, config={"callbacks": []})
+            resp = self._invoke_step(bound, messages)
             if getattr(resp, "tool_calls", None):
                 messages.append(resp)
                 for tc in resp.tool_calls:
@@ -207,6 +270,21 @@ class _ReactLoop:
                 {"node": "agent", "steps": self.steps, "evidence": len(self.evidence)},
             )
         )
+        if report and get_settings().injection_filter == "strict":
+            # 交付前报告侧剥除（与流水线 _finalize 同款）：输入侧隔离拦的是
+            # 已知证据，模型把观察内容改写/绕过写进报告时由这里兜底。
+            report, removed = strip_injected_lines(report)
+            if removed:
+                self.sink.emit(
+                    AgentEvent(
+                        EVENT_WARNING,
+                        {
+                            "where": "report-strip",
+                            "lines": removed,
+                            "hint": "strict 模式已剥除报告中的注入命中行",
+                        },
+                    )
+                )
         if not report:
             report = (
                 "## 未覆盖与局限\n\nAgent 在步数上限内未能产出报告，请重试或换问题。"

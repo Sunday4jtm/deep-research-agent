@@ -21,6 +21,7 @@ D8 起有两种数据源（UI_MODE 开关，PLAN §3.1 三端共用契约）：
 """
 from __future__ import annotations
 
+import html
 import json
 import os
 import queue
@@ -254,18 +255,29 @@ if st.button("开始研究", type="primary", disabled=running or not question.st
 
 
 def _event_line(event: AgentEvent) -> str:
-    """事件流单行 HTML：来源小圆点 + 灰阶等宽（纯展示）。"""
+    """事件流单行 HTML：来源小圆点 + 灰阶等宽（纯展示）。
+
+    所有动态字段必须过 html.escape 再拼：本函数的返回值以
+    unsafe_allow_html=True 上屏，而 payload.title 直接来自公网搜索结果
+    （攻击者可控文本）——不转义就是把外网 HTML 当代码执行（评审 P0-1：
+    恶意页面 <title><img onerror=…></title> → 搜索结果 → 本函数 → JS 弹窗，
+    五环全通）。eid 今天虽由服务端生成，仍统一转义，防止契约演进后漏防。
+    """
     p = event.payload
     if event.type == "evidence_added":
         src = "kb" if p.get("source_type") == "kb" else "web"
         dot = "src-kb" if src == "kb" else "src-web"
+        eid = html.escape(str(p.get("eid", "?")))
+        title = html.escape(str(p.get("title", ""))[:46])
         return (
-            f'<span class="ev"><b>[{p.get("eid", "?")}]</b>'
+            f'<span class="ev"><b>[{eid}]</b>'
             f'<span class="src-dot {dot}"></span>'
-            f'{str(p.get("title", ""))[:46]}</span>'
+            f"{title}</span>"
         )
     color = {"warning": "ev-warn", "error": "ev-err"}.get(event.type, "")
-    return f'<span class="ev {color}"><b>[{event.type}]</b> {str(event.payload)[:90]}</span>'
+    kind = html.escape(str(event.type))
+    detail = html.escape(str(event.payload)[:90])
+    return f'<span class="ev {color}"><b>[{kind}]</b> {detail}</span>'
 
 
 @st.fragment(run_every="1s")
@@ -323,7 +335,7 @@ def live_panel() -> None:
     if st.session_state.error:
         status_ph.markdown(
             f'<span class="status"><i class="dot dot-err"></i>研究失败 · '
-            f'{st.session_state.error[:120]}</span>',
+            f"{html.escape(st.session_state.error[:120])}</span>",
             unsafe_allow_html=True,
         )
     elif st.session_state.done:

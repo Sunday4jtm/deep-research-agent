@@ -44,10 +44,12 @@ def run_one(q, mode: str) -> dict:
     runner 若在 pytest 进程里跑（夹具端到端测试），泄漏的 MAX_ROUNDS
     会毒化后续所有测试的回环行为（本测试套件真实踩过）。
     """
-    original_rounds = os.environ.get("MAX_ROUNDS", "")
-    original_planner = os.environ.get("PLANNER_MODE", "")
-    original_ds = os.environ.get("DEEPSEEK_API_KEY", "")
-    original_mem = os.environ.get("MEMORY_ENABLED", "")
+    # 原值快照用 None 表示「原本未设置」：MEMORY_ENABLED 的空串是 conftest 的
+    # 禁用哨兵，必须与「变量不存在」区分开——旧实现按 falsy 判断，空串哨兵被
+    # 当成未设置再 pop 一次，整个 pytest 进程的隔离就被第一次 run_one 拆掉
+    # （评审 P0-2，磁盘实证：runs.jsonl 曾积累 122 条夹具条目）
+    touched = ("MAX_ROUNDS", "PLANNER_MODE", "DEEPSEEK_API_KEY", "MEMORY_ENABLED")
+    original = {name: os.environ.get(name) for name in touched}
     os.environ["MAX_ROUNDS"] = "1" if mode == "single" else "3"
     if q.kind in FIXTURE_KINDS:
         # 夹具题整条链路钉死：planner 也走 template（单子问题直通）——
@@ -55,23 +57,20 @@ def run_one(q, mode: str) -> dict:
         os.environ["PLANNER_MODE"] = "template"
     # 免费保障（用户指示 2026-11-02）：评测全程禁用 DeepSeek（计费），
     # chat 自动落到商汤公测免费档；恢复后仅影响本进程，.env 原样。
-    # 夹具跑分也不得写跨 run 记忆（MEMORY_ENABLED 隔离），否则污染真实研究的召回
+    # 夹具跑分也不得写跨 run 记忆：必须显式置 "0"。为什么不能 pop——config
+    # 读 MEMORY_ENABLED 的默认值是 "1"（开启），pop 掉等于把评测期间的记忆
+    # 反向打开（评审 P0-2）
     os.environ.pop("DEEPSEEK_API_KEY", None)
-    os.environ.pop("MEMORY_ENABLED", None)
+    os.environ["MEMORY_ENABLED"] = "0"
     get_settings.cache_clear()
     try:
         return _run_one_inner(q, mode)
     finally:
-        for name, original in (
-            ("MAX_ROUNDS", original_rounds),
-            ("PLANNER_MODE", original_planner),
-            ("DEEPSEEK_API_KEY", original_ds),
-            ("MEMORY_ENABLED", original_mem),
-        ):
-            if original:
-                os.environ[name] = original
-            else:
+        for name, value in original.items():
+            if value is None:
                 os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
         get_settings.cache_clear()
 
 

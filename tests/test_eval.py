@@ -113,3 +113,48 @@ def test_单个run可JSON序列化(monkeypatch: pytest.MonkeyPatch):
     run = run_one(q, "single")
     get_settings.cache_clear()
     json.dumps(run, ensure_ascii=False)  # 不抛即过：结果必须能落 jsonl
+
+
+# ============================================================
+# MEMORY_ENABLED 隔离回归（评审 P0-2：pop 变量 = config 默认 "1" = 评测期间
+# 记忆反向开启，runs.jsonl 曾因此积累 122 条夹具条目）
+# ============================================================
+def test_run_one期间记忆必须显式禁用(monkeypatch: pytest.MonkeyPatch):
+    """夹具跑分不得写跨 run 记忆：run_one 必须显式置 "0"，pop 会被默认值反转。"""
+    import os
+
+    import eval.run_eval as run_eval_mod
+
+    seen_settings: dict = {}
+
+    def fake_inner(question_obj, mode):
+        seen_settings["memory_enabled"] = get_settings().memory_enabled
+        return {"ok": True}
+
+    monkeypatch.setattr(run_eval_mod, "_run_one_inner", fake_inner)
+    monkeypatch.setenv("MEMORY_ENABLED", "1")  # 故意从"开着"进入，验证期间被关掉
+    get_settings.cache_clear()
+    run_eval_mod.run_one(QUESTIONS[0], "single")
+
+    assert seen_settings["memory_enabled"] is False, "评测期间记忆必须关闭"
+    assert os.environ.get("MEMORY_ENABLED") == "1", "调用方原值必须原样还原"
+
+
+def test_run_one还原区分未设置与空串哨兵(monkeypatch: pytest.MonkeyPatch):
+    """conftest 用空串哨兵禁用记忆：还原逻辑若把空串当"未设置"再 pop 一次，
+    整个 pytest 进程的隔离会被第一次 run_one 拆掉（评审 P0-2 的第二半）。"""
+    import os
+
+    import eval.run_eval as run_eval_mod
+
+    def fake_inner(question_obj, mode):
+        return {"ok": True}
+
+    monkeypatch.setattr(run_eval_mod, "_run_one_inner", fake_inner)
+    monkeypatch.setenv("MEMORY_ENABLED", "")  # 模拟 conftest 哨兵
+    get_settings.cache_clear()
+    run_eval_mod.run_one(QUESTIONS[0], "single")
+
+    assert os.environ.get("MEMORY_ENABLED") == "", "空串哨兵必须原样还原，不得变成未设置"
+    assert get_settings().memory_enabled is False, "还原后隔离必须继续生效"
+    get_settings.cache_clear()

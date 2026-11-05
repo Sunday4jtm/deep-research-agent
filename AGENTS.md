@@ -5,7 +5,7 @@
 ## 1. 这是什么
 
 LangGraph 编排的多跳研究 Agent（面试作品）。私有知识库与公网搜索经 **MCP 协议**
-接入为工具；Streamlit/FastAPI/Next.js 三端共用一份事件契约；全链路 Langfuse 追踪。
+接入为工具；静态研究台与 Streamlit 两端共用一份事件契约（FastAPI 网关透传，Next.js 为预留）；全链路 Langfuse 追踪。
 环境：conda env `agent-research`（Python 3.12）；依赖安装一律带清华镜像参数。
 
 ## 2. 三条最重要的约定（继承自姊妹项目《AI 学习监督员》）
@@ -24,7 +24,7 @@ LangGraph 编排的多跳研究 Agent（面试作品）。私有知识库与公�
 | 测试全离线：一律走 `FakeProvider`/Stub，禁止测试联网 | 不烧钱、CI 无需 secrets |
 | **新仓库代码零 import 老仓库**（`../智谱项目`）；唯一运行时连接 = MCP 协议（主路）+ 老仓库 REST `/api/kb/search`（direct 兜底），两者均只读 | 架构边界（PLAN D-2），破了叙事就垮 |
 | `PROVIDER_MODE`/`WEB_PROVIDER` 等开关改动必须同步 `.env.example` 与 `PLAN.md` | 开关是评测对照与兜底的共同机制 |
-| 事件契约（`app/contracts.py`，D2 起）改动必须三端同步 | 三套 UI 共用一份契约，漏一边=功能凭空消失（老项目同款教训） |
+| 事件契约（`app/contracts.py`，D2 起）改动必须逐端同步 | 契约被所有 UI 消费（现有静态研究台/Streamlit 两端，Next.js 落地后同样遵守），漏一边=功能凭空消失（老项目同款教训） |
 | LangGraph 只用 StateGraph/条件边/循环；不引 checkpoint/子图 | 2 周范围控制（PLAN 风险表） |
 
 ## 4. 代码地图
@@ -34,13 +34,14 @@ app/config.py        全局配置（.env 加载，离线安全）
 app/llm.py           三模型链 + 回退（加锁单飞）+ token 粗估
 app/contracts.py     事件契约 v1（三端共用，改动=三端同步）
 app/planner.py       LLM 规划器（结构化输出三级降级）
-app/synthesizer.py   LLM 综合器（流式报告 + 降级链）
+app/synthesizer.py   LLM 综合器（流式报告 + 降级链 + 注入强过滤）
 app/citation.py      citation pass（引用对账，评测指标来源）
+app/agent_loop.py    ReAct 自主循环（bind_tools 工具循环，AGENT_MODE=react）
 app/tools/base.py    ToolProvider 协议 + Evidence（引用编号来源）
 app/tools/fake.py    确定性离线实现（CI/评测/陌生人复现）
 app/tools/direct.py  直连实现（web+kb 已落地；kb=HTTP 直连老仓库 /api/kb/search）
 app/tools/mcp_provider.py MCPProvider（stdio 连老仓库 Server A=web / B=kb）
-app/tools/sanitize.py 清洗管道 + 注入特征检测
+app/tools/sanitize.py 清洗管道 + 注入特征检测（INJECTION_FILTER=strict 时隔离/剥除）
 app/graph/state.py   ResearchState 全字段（PLAN §3.2）
 app/graph/nodes.py   图节点工厂（planner/retriever/verifier/synthesizer）
 app/graph/build.py   StateGraph 装配 + run_research 入口

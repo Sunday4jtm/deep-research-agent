@@ -44,6 +44,7 @@ class Settings:
     agent_max_steps: int    # ReAct 步数熔断
     reflect_mode: str       # llm（验证后 LLM 反思：learnings+查询改写）| off（纯确定性 gap 重试）
     memory_enabled: bool    # 跨 run 记忆（data/memory/runs.jsonl，已 gitignore）
+    injection_filter: str   # strict（命中证据隔离出综合+报告剥除）| report（只告警，P2-9 原语义）
     tracing_enabled: bool    # Langfuse 追踪开关（D9；Keys 在 .env，开关独立——离线测试默认关）
 
 
@@ -90,5 +91,6 @@ def get_settings() -> Settings:
         agent_max_steps=int(_env("AGENT_MAX_STEPS", "10")),
         reflect_mode=_env("REFLECT_MODE", "llm"),
         memory_enabled=_env("MEMORY_ENABLED", "1") in {"1", "true", "yes", "on"},
+        injection_filter=_env("INJECTION_FILTER", "strict"),
         tracing_enabled=_env("LANGFUSE_ENABLED") in {"1", "true", "yes", "on"},
     )

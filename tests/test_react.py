@@ -9,7 +9,7 @@ import pytest
 from langchain_core.messages import AIMessage
 
 from app.agent_loop import run_react_research
-from app.contracts import EVENT_THOUGHT, ListSink
+from app.contracts import EVENT_THOUGHT, EVENT_WARNING, ListSink
 from app.tools.base import Evidence
 
 
@@ -136,4 +136,78 @@ def test_步数熔断兜底(react_env, monkeypatch: pytest.MonkeyPatch):
 
     assert final["round"] == 3  # 熔断
     assert "未能产出报告" in final["report"]
+    get_settings.cache_clear()
+
+
+def test_主模型挂了自动降级备用(react_env, monkeypatch: pytest.MonkeyPatch):
+    """此前只取 chain[0]：主模型限流时 ReAct 即死（评估 P1 项）——现在单步内逐个降级。"""
+    provider, _install = react_env
+    monkeypatch.setenv("AGENT_MAX_STEPS", "6")
+    from app.config import get_settings
+
+    get_settings.cache_clear()
+
+    good = _ScriptedChat(
+        [
+            _tool_call_msg("web_search", {"query": "混合检索"}, "c1"),
+            AIMessage(content="## 核心结论\n互补提升召回 [E1]。"),
+        ]
+    )
+
+    class _Dead:
+        def bind_tools(self, tools):
+            return self
+
+        def invoke(self, messages, **kw):
+            raise RuntimeError("限流")
+
+    import app.agent_loop as loop_mod
+
+    monkeypatch.setattr(loop_mod, "get_provider", lambda: provider)
+    monkeypatch.setattr(
+        loop_mod, "_model_chain", lambda: [("bad", "u", "m", "k"), ("good", "u", "m", "k")]
+    )
+    monkeypatch.setattr(
+        loop_mod, "_build_chat", lambda p, b, m, k, t: _Dead() if p == "bad" else good
+    )
+
+    sink = ListSink()
+    final = run_react_research("混合检索解决了什么问题？", "", sink=sink)
+
+    assert "[E1]" in final["report"]
+    assert final["citation_report"]["mapped"] == 1
+    failovers = [
+        e
+        for e in sink.events
+        if e.type == EVENT_WARNING and e.payload.get("where") == "react/failover"
+    ]
+    assert failovers, "降级必须发 warning 事件让用户看见"
+    get_settings.cache_clear()
+
+
+def test_主备全挂抛错不假装成功(react_env, monkeypatch: pytest.MonkeyPatch):
+    """全败才抛，与 invoke_with_fallback 同语义：绝不拿空报告假装成功。"""
+    provider, _install = react_env
+    monkeypatch.setenv("AGENT_MAX_STEPS", "6")
+    from app.config import get_settings
+
+    get_settings.cache_clear()
+
+    import app.agent_loop as loop_mod
+
+    class _Dead:
+        def bind_tools(self, tools):
+            return self
+
+        def invoke(self, messages, **kw):
+            raise RuntimeError("限流")
+
+    monkeypatch.setattr(loop_mod, "get_provider", lambda: provider)
+    monkeypatch.setattr(
+        loop_mod, "_model_chain", lambda: [("bad", "u", "m", "k"), ("good", "u", "m", "k")]
+    )
+    monkeypatch.setattr(loop_mod, "_build_chat", lambda *a, **k: _Dead())
+
+    with pytest.raises(RuntimeError, match="主备模型均失败"):
+        run_react_research("任意问题", "", sink=ListSink())
     get_settings.cache_clear()

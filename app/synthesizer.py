@@ -27,7 +27,7 @@ from app.contracts import (
 )
 from app.llm import _build_chat, _model_chain, estimate_tokens
 from app.tools.base import Evidence
-from app.tools.sanitize import detect_injection
+from app.tools.sanitize import detect_injection, strip_injected_lines
 from app.tracing import callbacks as tracing_callbacks
 
 logger = logging.getLogger(__name__)
@@ -53,6 +53,38 @@ def template_report(state: dict) -> str:
     if gaps:
         report += "\n\n### 未覆盖（诚实披露）\n" + "\n".join(f"- {q}" for q in gaps)
     return report
+
+
+def _quarantine_flagged(evidence: list[Evidence], sink: EventSink) -> list[Evidence]:
+    """strict 模式输入侧拦截：命中注入特征的证据不进综合 prompt（证据册保留）。
+
+    为什么从"只告警"升级为隔离：免费通道评测实测商汤 6.8-flash-lite 在
+    4/4 次注入题中执行了金丝雀指令（PLAN §十二，P2-17 升 P1）——分隔符
+    加提示词的数据/指令分离对弱模型不可靠，"不看"比"看了再祈祷"可靠。
+    误报代价 = 该证据缺席报告，warning 事件带 eids 明细让用户可感知、
+    可人工核读；INJECTION_FILTER=report 退回只告警的 P2-9 原语义（对照用）。
+    只扫 snippet 不扫 title：title 泄漏面小（模板路径只列 title/locator），
+    报告侧剥除兜底。
+    """
+    if get_settings().injection_filter != "strict":
+        return evidence
+    clean: list[Evidence] = []
+    flagged: list[Evidence] = []
+    for ev in evidence:
+        (flagged if detect_injection(ev.snippet) else clean).append(ev)
+    if flagged:
+        sink.emit(
+            AgentEvent(
+                EVENT_WARNING,
+                {
+                    "where": "injection-quarantine",
+                    "count": len(flagged),
+                    "eids": [ev.eid for ev in flagged][:10],
+                    "hint": "命中注入特征的证据已隔离出综合 prompt（证据册保留）",
+                },
+            )
+        )
+    return clean
 
 
 def _evidence_within_budget(
@@ -180,13 +212,21 @@ def _emit_delta(sink: EventSink, text: str) -> None:
 
 
 def _finalize(
-    report: str, usage: dict[str, int], evidence_ids: set[str], sink: EventSink
+    report: str,
+    usage: dict[str, int],
+    evidence_ids: set[str],
+    sink: EventSink,
+    already_streamed: bool = False,
 ) -> tuple[str, dict[str, int], dict]:
-    """三条产出路径的共同收尾：报告注入二次扫描 + citation 对账。
+    """三条产出路径的共同收尾：报告注入扫描（strict 下剥除）+ citation 对账。
 
     为什么扫报告而不只扫输入：输入侧扫描命中≠注入成功，模型可能没理它；
     反过来输入侧漏检的绕过也可能被模型执行。最终报告是否带出注入指令
-    才是"注入防御"指标的事实判据（评审 P2-9）——只报告不拦截。
+    才是"注入防御"指标的事实判据（评审 P2-9）。2026-11-05 起 strict 模式
+    在告警之外动手：命中行整行剥除后再对账——引用计数必须按剥除后的
+    终稿算，否则会出现"引用了被剥除行"的幽灵对账。
+    already_streamed：①流式路径已把未净化文本逐字推给 UI，剥除后必须
+    reset 清场再重发终稿；②③路径先 finalize 再发 delta，无此问题。
     """
     flags = detect_injection(report)
     if flags:
@@ -200,12 +240,30 @@ def _finalize(
                 },
             )
         )
+        if get_settings().injection_filter == "strict":
+            report, removed = strip_injected_lines(report)
+            if removed:
+                sink.emit(
+                    AgentEvent(
+                        EVENT_WARNING,
+                        {
+                            "where": "report-strip",
+                            "lines": removed,
+                            "hint": "strict 模式已剥除报告中的注入命中行",
+                        },
+                    )
+                )
+                if already_streamed:
+                    sink.emit(AgentEvent(EVENT_REPORT_RESET, {}))
+                    _emit_delta(sink, report)
     return report, usage, check_citations(report, evidence_ids)
 
 
 def synthesize_report(state: dict, sink: EventSink) -> tuple[str, dict[str, int], dict]:
     """入口：永不抛异常（③兜底保证）。返回 (报告, token_usage, citation_report)。"""
     evidence: list[Evidence] = state.get("evidence", [])
+    # strict 注入过滤先于预算：命中证据连"被压缩成摘要"的机会都不该有
+    evidence = _quarantine_flagged(evidence, sink)
     kept, dropped_n, compressed = _within_budget_or_compress(
         evidence, sink
     )
@@ -233,7 +291,11 @@ def synthesize_report(state: dict, sink: EventSink) -> tuple[str, dict[str, int]
                 logger.info("synthesizer ① 成功：%s/%s，%d 字", provider, model, len(report))
                 # 流式 usage 以估算为准（分块 usage 汇总各 provider 行为不一）
                 return _finalize(
-                    report, {"synthesizer": estimate_tokens(report)}, evidence_ids, sink
+                    report,
+                    {"synthesizer": estimate_tokens(report)},
+                    evidence_ids,
+                    sink,
+                    already_streamed=True,  # 已逐字推给 UI：剥注入行后需 reset+重发终稿
                 )
         except Exception as exc:  # 限流/断流都降下一级
             if emitted_any:
@@ -252,10 +314,12 @@ def synthesize_report(state: dict, sink: EventSink) -> tuple[str, dict[str, int]
             )
             report = str(resp.content).strip()
             if report:
-                _emit_delta(sink, report)
-                return _finalize(
+                # 先 finalize（可能剥注入行）再发 delta：UI 看到的就是终稿
+                final, usage, citation = _finalize(
                     report, {"synthesizer": estimate_tokens(report)}, evidence_ids, sink
                 )
+                _emit_delta(sink, final)
+                return final, usage, citation
         except Exception as exc:
             logger.warning("synthesizer ② 失败（%s/%s）：%s", provider, model, exc)
 
@@ -267,7 +331,9 @@ def synthesize_report(state: dict, sink: EventSink) -> tuple[str, dict[str, int]
             {"where": "synthesizer", "error": "LLM 生成失败，已用模板兜底"},
         )
     )
-    _emit_delta(sink, report)
-    return _finalize(
+    # 与 ② 同理：先 finalize 再发 delta，UI 看到的就是终稿
+    final, usage, citation = _finalize(
         report, {"synthesizer": estimate_tokens(report)}, evidence_ids, sink
     )
+    _emit_delta(sink, final)
+    return final, usage, citation

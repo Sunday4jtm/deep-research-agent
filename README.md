@@ -14,10 +14,12 @@
   查询跨轮重试，`MAX_ROUNDS` 熔断；报告对"没查到的"诚实标注"证据不足"。
 - **双源混合取证**：每个子问题同时查私有库（向量+BM25 混合检索）与公网
   （DeepSeek search/fetch），跨源 URL 规范化去重；单源挂掉不拖垮报告（分源容错）。
-- **事件契约三端共用**：图只认 `AgentEvent`，Streamlit / FastAPI SSE 网关 /
-  （可选）Next.js 消费同一份流——改契约必须三端同步（仓库纪律）。
+- **事件契约两端共用**：图只认 `AgentEvent`，静态研究台与 Streamlit 消费
+  同一份流（FastAPI SSE 网关透传；Next.js 为预留）——改契约必须逐端同步（仓库纪律）。
 - **Prompt Injection 纵深防御**：清洗管道（零宽/注释/脚本标签）→ 结构隔离
-  （分隔符包裹）→ 特征告警（输入侧+报告侧二次扫描）→ 评测兜底（金丝雀夹具）。
+  （分隔符包裹）→ 特征告警（输入侧+报告侧二次扫描）→ **强过滤**
+  （`INJECTION_FILTER=strict`：命中证据隔离出综合 prompt、报告命中行剥除）→
+  评测兜底（金丝雀夹具 + 离线门禁测试）。
 - **全链路追踪**：Langfuse 记录每次 LLM 调用（开关独立于 Key，密钥样式
   出站打码）；用它定位并修复了检索串行瓶颈（-65% 节点耗时）。
 
@@ -54,17 +56,18 @@ graph TB
     G -.-> LF
 ```
 
-## 事件契约 v1（三端按字符串字面匹配）
+## 事件契约 v1（各端按字符串字面匹配）
 
 | type | payload | 说明 |
 |---|---|---|
-| `research_started` | `{question, provider_mode}` | 首事件；UI 据此亮离线演示徽标 |
+| `research_started` | `{question, provider_mode, agent_mode}` | 首事件；UI 据此亮离线演示徽标 |
 | `node_started/finished` | `{node, ms?/gaps?/conflicts?}` | 节点进出（延迟统计的数据源） |
 | `round_started` | `{round}` | 检索轮次 |
 | `evidence_added` | `{eid, source_type, title, locator}` | 证据入册（eid=引用编号） |
-| `report_delta` / `report_reset` | `{text}` / `{}` | 报告流式片段 / 断流清场（降级边界专用） |
+| `thought` | `{stage, text}` | 思考链时间线（plan/memory/reflect/compress/act/boot） |
+| `report_delta` / `report_reset` | `{text}` / `{}` | 报告流式片段 / 断流或剥注入行后清场重发 |
 | `warning` | `{where, ...}` | 注入特征 / 跨源指标分歧 / 分源失败——只报告不拦截 |
-| `done` | `{citation_report}` | **终止事件**：引用对账（refs/mapped/unmapped） |
+| `done` | `{citation_report, token_usage}` | **终止事件**：引用对账（refs/mapped/unmapped）+ token 汇总 |
 | `error` | `{code, msg}` | 失败也是事件流的一部分（UI 假死防线） |
 
 ## 快速开始
@@ -109,7 +112,9 @@ python -m eval.run_eval --modes single --repeat 1 --skip-judge   # 快速基线
    非 http(s)），MCP 路径在本地+老仓库双层校验；
 2. **入站令牌**：老仓库 `X-API-Token` 全接口闸；本仓库 `KB_API_TOKEN`
    指向非回环地址时强制携带（fail-fast）；
-3. **注入四件套**：清洗 → 隔离 → 告警（输入+报告双侧）→ 金丝雀评测；
+3. **注入五道防线**：清洗 → 隔离 → 告警（输入+报告双侧）→ 强过滤
+   （`INJECTION_FILTER=strict` 默认：证据级隔离出综合 prompt + 报告命中行
+   剥除；`report` 退回只告警原语义）→ 金丝雀评测 + 离线门禁测试；
 4. **追踪脱敏**：密钥样式字符串出站打码；demo 语料与私人知识库物理隔离
    （`KB_CHROMA_DIR` 目录级开关）。
 
@@ -127,7 +132,8 @@ python -m eval.run_eval --modes single --repeat 1 --skip-judge   # 快速基线
 
 ```
 app/config.py    全局配置（.env；开关见 .env.example）
-app/llm.py       双模型链+回退+token 粗估；tracing 注入点
+app/llm.py       三模型链（DeepSeek→SenseNova→智谱）+ 回退 + token 粗估
+app/agent_loop.py ReAct 自主循环（LLM 驱动工具调用，AGENT_MODE=react）
 app/tracing.py   Langfuse（开关/mask/flush）
 app/contracts.py 事件契约 v1（三端共用，改动=三端同步）
 app/planner.py   LLM 规划器（结构化输出三级降级）
