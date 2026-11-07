@@ -37,6 +37,7 @@ app/planner.py       LLM 规划器（结构化输出三级降级）
 app/synthesizer.py   LLM 综合器（流式报告 + 降级链 + 注入强过滤）
 app/citation.py      citation pass（引用对账，评测指标来源）
 app/agent_loop.py    ReAct 自主循环（bind_tools 工具循环，AGENT_MODE=react）
+app/subagents.py     检索层子 Agent（每子问题独立上下文循环，RETRIEVAL_MODE=subagents）
 app/tools/base.py    ToolProvider 协议 + Evidence（引用编号来源）
 app/tools/fake.py    确定性离线实现（CI/评测/陌生人复现）
 app/tools/direct.py  直连实现（web+kb 已落地；kb=HTTP 直连老仓库 /api/kb/search）
@@ -51,6 +52,7 @@ frontend/app.py      Streamlit 界面（备选；SSE 客户端/inline 双模式�
 eval/                D10 评测：题集/夹具/指标/裁判/runner（结果落 eval/results/，已 gitignore）
 scripts/preflight.py Provider 真实预检（P0）
 scripts/spike_*      P0 两个 hello-world spike（MCP/Langfuse）
+Makefile             常用命令收敛（make help 看 demo/test/check/preflight/eval-fast）
 tests/               全离线测试（conftest 带断网守卫）
 .github/workflows/   GitHub Actions CI（离线）
 ```

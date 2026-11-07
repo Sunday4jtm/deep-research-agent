@@ -14,6 +14,9 @@
   查询跨轮重试，`MAX_ROUNDS` 熔断；报告对"没查到的"诚实标注"证据不足"。
 - **双源混合取证**：每个子问题同时查私有库（向量+BM25 混合检索）与公网
   （DeepSeek search/fetch），跨源 URL 规范化去重；单源挂掉不拖垮报告（分源容错）。
+- **检索层双模式**：`parallel`（子问题×源并行工具调用，基线）与 `subagents`
+  （每子问题一个独立上下文子 Agent，自主决定查什么/查几次/要不要深读，
+  `RETRIEVAL_MODE` 切换；无 chat Key 自动回落 parallel）——下游零感知。
 - **事件契约两端共用**：图只认 `AgentEvent`，静态研究台与 Streamlit 消费
   同一份流（FastAPI SSE 网关透传；Next.js 为预留）——改契约必须逐端同步（仓库纪律）。
 - **Prompt Injection 纵深防御**：清洗管道（零宽/注释/脚本标签）→ 结构隔离
@@ -147,6 +150,7 @@ python -m eval.run_eval --modes single --repeat 1 --skip-judge   # 快速基线
 app/config.py    全局配置（.env；开关见 .env.example）
 app/llm.py       三模型链（DeepSeek→SenseNova→智谱）+ 回退 + token 粗估
 app/agent_loop.py ReAct 自主循环（LLM 驱动工具调用，AGENT_MODE=react）
+app/subagents.py 检索层子 Agent（每子问题独立上下文，RETRIEVAL_MODE=subagents）
 app/tracing.py   Langfuse（开关/mask/flush）
 app/contracts.py 事件契约 v1（各端共用，改动=逐端同步）
 app/planner.py   LLM 规划器（结构化输出三级降级）
@@ -160,5 +164,6 @@ frontend/app.py  Streamlit（gateway/inline 双模式，备选界面）
 app/memory.py    跨 run 记忆（bigram 召回注入 planner，gitignored）
 eval/            题集/夹具/指标/裁判/runner（入库基线见 eval/BASELINE.md）
 scripts/         preflight（真实预检）+ 两个 P0 spike
+Makefile         常用命令收敛（make help）
 tests/           全离线测试（conftest 断网硬守卫）
 ```

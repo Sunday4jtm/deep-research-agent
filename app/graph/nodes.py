@@ -43,6 +43,38 @@ _FETCH_WORKERS = 4
 EMPTY_QUERY_PREFIX = "EMPTY::"
 
 
+def _plan_queries(state) -> tuple[list[str], dict[str, str], list[str], dict[str, list[str]], int]:
+    """本轮取证计划：parallel/subagents 两模式共用（单一实现防漂移）。
+
+    返回 (eligible 子问题, 各自查询词, attempted 入册更新, subq_evidence 起点,
+    轮号)。gap 子问题用反思器改写查询重试（v2.3 回环语义）。纯函数：只读
+    state 返回新列表——fallback 重算时不会二次污染。
+    """
+    attempted: list[str] = list(state.get("attempted_queries", []))
+    subq_evidence: dict[str, list[str]] = dict(state.get("subq_evidence", {}))
+    rewritten = dict(state.get("rewritten", {}))
+    eligible: list[str] = []
+    query_for: dict[str, str] = {}
+    for subq in state.get("sub_questions", []):
+        if subq in attempted:
+            # 跨轮去重：查过【且有证据】的不再重复花钱；零证据的 gap 例外——
+            # 反思器（v2.3）已为它生成改写查询，用新查询重试=循环真转；
+            # 无改写时退回原查询（瞬时失败重试语义，D8）。
+            if subq_evidence.get(subq):
+                continue
+            query_for[subq] = rewritten.get(subq, subq)
+        else:
+            attempted.append(subq)
+            query_for[subq] = subq
+        eligible.append(subq)
+    for subq in eligible:
+        # gap 重试的改写查询也入册（attempted 只按原子问题名去重，
+        # 查询文本照记——排障时能看到"实际发出去的是什么"）
+        if query_for[subq] != subq:
+            attempted.append(query_for[subq])
+    return eligible, query_for, attempted, subq_evidence, int(state.get("round", 0)) + 1
+
+
 def make_plan_node(sink: EventSink):
     """拆解研究问题。D2 骨架：单子问题直通；D3 换 LLM 拆解 + 三级降级。
 
@@ -126,49 +158,35 @@ def make_retrieve_node(sink: EventSink):
     """取证节点：对每个子问题查公网 + 知识库，统一编号入册。
 
     去重依据 attempted_queries：同一查询绝不重复提交（借鉴 dzhng/deep-research）。
+    RETRIEVAL_MODE 双模式：parallel=子问题×源并行工具调用（基线，D4 起）；
+    subagents=每子问题一个独立上下文子 Agent（v2.5，app/subagents.py）——
+    下游消费完全同构（去重/E# 编号/subq_evidence/errors），切换零感知。
     """
 
     def retrieve(state):
         sink.emit(AgentEvent(EVENT_NODE_STARTED, {"node": "retriever"}))
+        if get_settings().retrieval_mode == "subagents":
+            return _retrieve_subagents(state)
+        return _retrieve_parallel(state)
+
+    def _retrieve_parallel(state):
+        """parallel 基线路径：子问题×源并行工具调用（D4 逻辑原样，行为不变）。"""
         provider = get_provider()
         settings = get_settings()
         evidence: list[Evidence] = list(state.get("evidence", []))
         # 去重键用规范化后的 locator（utUtm/http(s)/尾斜杠差异不该骗过去重）；
         # Evidence.locator 本身保持原样——展示与引用核验要的是原始 URL（评审 P2-11）
         seen_locators = {canonicalize_locator(ev.locator) for ev in evidence}
-        attempted: list[str] = list(state.get("attempted_queries", []))
-        subq_evidence: dict[str, list[str]] = dict(state.get("subq_evidence", {}))
-        round_no = int(state.get("round", 0)) + 1
+        errors: list[str] = list(state.get("errors", []))
+        # 取证计划与 subagents 模式共用 _plan_queries（单一实现防漂移）
+        eligible, query_for, attempted, subq_evidence, round_no = _plan_queries(state)
 
+        # (子问题 × 源) 一次性提交线程池并行跑——trace 数据（D9）显示检索证据
+        # 间隔 avg 114ms、串行等待随 子问题数×breadth 线性恶化；并行化后墙钟=
+        # 最慢一路。消费仍按原顺序：事件流与 eid 编号保持确定性，变的只是
+        # "等"的方式。
         sink.emit(AgentEvent(EVENT_ROUND_STARTED, {"round": round_no}))
         k = max(1, settings.breadth)
-        errors: list[str] = list(state.get("errors", []))
-
-        # 先定本轮要取证的子问题（gap 允许跨轮重试），再把全部
-        # (子问题 × 源) 一次性提交线程池并行跑——trace 数据（D9，
-        # assets/_check/d9_timing.py）显示检索证据间隔 avg 114ms、
-        # 串行等待随 子问题数×breadth 线性恶化；并行化后墙钟=最慢一路。
-        # 消费仍按原顺序：事件流与 eid 编号保持确定性，变的只是"等"的方式。
-        eligible: list[str] = []
-        query_for: dict[str, str] = {}
-        rewritten = dict(state.get("rewritten", {}))
-        for subq in state.get("sub_questions", []):
-            if subq in attempted:
-                # 跨轮去重：查过【且有证据】的不再重复花钱；零证据的 gap 例外——
-                # 反思器（v2.3）已为它生成改写查询，用新查询重试=循环真转；
-                # 无改写时退回原查询（瞬时失败重试语义，D8）。
-                if subq_evidence.get(subq):
-                    continue
-                query_for[subq] = rewritten.get(subq, subq)
-            else:
-                attempted.append(subq)
-                query_for[subq] = subq
-            eligible.append(subq)
-        for subq in eligible:
-            # gap 重试的改写查询也入册（attempted 只按原子问题名去重，
-            # 查询文本照记——排障时能看到"实际发出去的是什么"）
-            if query_for[subq] != subq:
-                attempted.append(query_for[subq])
 
         future_by_key: dict[tuple[str, str], Any] = {}
         with ThreadPoolExecutor(max_workers=_FETCH_WORKERS) as pool:
@@ -253,6 +271,135 @@ def make_retrieve_node(sink: EventSink):
             "subq_evidence": subq_evidence,
             "round": round_no,
             "errors": errors,
+        }
+
+    def _retrieve_subagents(state):
+        """subagents 路径（v2.5）：每子问题一个独立上下文子 Agent（线程池并行）。
+
+        下游消费与 parallel 完全同构（去重/E# 编号/subq_evidence/errors），
+        切换零感知；无 chat Key 自动回落 parallel——检索层 Agent 化不能成为
+        新故障点。子 Agent 是纯 Python 消息循环（app/subagents.py），不是
+        LangGraph 子图（红线：不引 subgraph/checkpoint）。
+        """
+        import app.subagents as sub_mod
+
+        if not sub_mod.has_chat_model():
+            sink.emit(
+                AgentEvent(
+                    EVENT_WARNING,
+                    {"where": "subagents", "msg": "无可用 chat Key，回落 parallel 工具调用"},
+                )
+            )
+            return _retrieve_parallel(state)
+        evidence: list[Evidence] = list(state.get("evidence", []))
+        seen_locators = {canonicalize_locator(ev.locator) for ev in evidence}
+        errors: list[str] = list(state.get("errors", []))
+        eligible, _query_for, attempted, subq_evidence, round_no = _plan_queries(state)
+        sink.emit(AgentEvent(EVENT_ROUND_STARTED, {"round": round_no}))
+        max_steps = max(1, get_settings().subagent_max_steps)
+
+        results: dict[str, Any] = {}
+        if eligible:
+            with ThreadPoolExecutor(max_workers=_FETCH_WORKERS) as pool:
+                futures = {
+                    subq: pool.submit(
+                        sub_mod.run_subagent,
+                        subq,
+                        state.get("question", ""),
+                        state.get("focus", ""),
+                        get_provider(),
+                        sink,
+                        max_steps,
+                    )
+                    for subq in eligible
+                }
+                for subq in eligible:
+                    try:
+                        results[subq] = futures[subq].result()
+                    except Exception as exc:  # 单子 Agent 崩溃不拖垮整轮（分源容错同哲学）
+                        errors.append(f"subagent/{subq[:40]}: {type(exc).__name__}")
+                        sink.emit(
+                            AgentEvent(
+                                EVENT_WARNING,
+                                {
+                                    "where": "subagent",
+                                    "subq": subq[:60],
+                                    "error": f"{type(exc).__name__}: {exc}"[:120],
+                                },
+                            )
+                        )
+
+        # 消费按原顺序：事件流与全局 E# 编号保持确定性；子 Agent 局册编号在此
+        # 重编为全局编号，跨子问题去重口径与 parallel 完全一致
+        tokens = 0
+        for subq in eligible:
+            result = results.get(subq)
+            if result is None:
+                subq_evidence.setdefault(subq, [])  # 失败子 Agent：缺口交 gap 回环
+                continue
+            tokens += result.tokens
+            errors.extend(result.errors)
+            eids = subq_evidence.get(subq, [])
+            for hit in result.evidence:
+                canonical = canonicalize_locator(hit.locator)
+                if canonical in seen_locators:
+                    continue
+                seen_locators.add(canonical)
+                flags = detect_injection(hit.snippet)
+                if flags:
+                    # 与 parallel 同款只报告不拦截：strict 强过滤在 synthesizer 入口
+                    sink.emit(
+                        AgentEvent(
+                            EVENT_WARNING,
+                            {
+                                "where": "injection-scan",
+                                "patterns": flags[:5],
+                                "locator": hit.locator[:80],
+                            },
+                        )
+                    )
+                eid = f"E{len(evidence) + 1}"
+                ev = replace(hit, eid=eid)
+                evidence.append(ev)
+                eids.append(eid)
+                sink.emit(
+                    AgentEvent(
+                        EVENT_EVIDENCE_ADDED,
+                        {
+                            "eid": ev.eid,
+                            "source_type": ev.source_type,
+                            "title": ev.title,
+                            "locator": ev.locator,
+                        },
+                    )
+                )
+            subq_evidence[subq] = eids
+            sink.emit(
+                AgentEvent(
+                    EVENT_THOUGHT,
+                    {
+                        "stage": "subagent",
+                        "text": f"[{subq[:20]}] 完成：{len(eids)} 证据 / {result.steps} 步",
+                    },
+                )
+            )
+
+        sink.emit(
+            AgentEvent(
+                EVENT_NODE_FINISHED,
+                {"node": "retriever", "round": round_no, "evidence": len(evidence)},
+            )
+        )
+        merged_usage = dict(state.get("token_usage", {}))
+        if tokens:
+            merged_usage["retriever"] = merged_usage.get("retriever", 0) + tokens
+        return {
+            "evidence": evidence,
+            "attempted_queries": attempted,
+            "subq_evidence": subq_evidence,
+            "round": round_no,
+            "errors": errors,
+            "token_usage": merged_usage,
         }
 
     return retrieve

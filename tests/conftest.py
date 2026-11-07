@@ -16,6 +16,8 @@ os.environ["SYNTH_MODE"] = "template"
 # v2.3：反思（LLM）与跨 run 记忆在测试里全关——确定性 + 不污染 data/memory/
 os.environ["REFLECT_MODE"] = "off"
 os.environ["MEMORY_ENABLED"] = ""
+# v2.5：检索层 Agent 化默认关——subagents 需要真 LLM 循环，离线测试钉确定路径
+os.environ["RETRIEVAL_MODE"] = "parallel"
 
 
 @pytest.fixture(autouse=True)

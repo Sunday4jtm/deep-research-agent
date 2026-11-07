@@ -43,6 +43,8 @@ class Settings:
     evidence_char_budget: int  # 证据总字符预算（双熔断之二）
     agent_mode: str         # research（流水线）| react（ReAct 自主循环，v2.4）
     agent_max_steps: int    # ReAct 步数熔断
+    retrieval_mode: str     # parallel（子问题×源并行工具调用）| subagents（子 Agent 编排，v2.5）
+    subagent_max_steps: int  # 子 Agent 步数熔断（subagents 模式）
     reflect_mode: str       # llm（验证后 LLM 反思：learnings+查询改写）| off（纯确定性 gap 重试）
     memory_enabled: bool    # 跨 run 记忆（data/memory/runs.jsonl，已 gitignore）
     injection_filter: str   # strict（命中证据隔离出综合+报告剥除）| report（只告警，P2-9 原语义）
@@ -92,6 +94,8 @@ def get_settings() -> Settings:
         agent_mode=_env("AGENT_MODE", "research"),
         # 裸 int() 是 P3-16 修复声称消灭的故障类在这里漏网：.env 手滑全站崩（评审）
         agent_max_steps=_env_int("AGENT_MAX_STEPS", 10),
+        retrieval_mode=_env("RETRIEVAL_MODE", "parallel"),
+        subagent_max_steps=_env_int("SUBAGENT_MAX_STEPS", 3),
         reflect_mode=_env("REFLECT_MODE", "llm"),
         # .lower()：大写 True/TRUE 此前静默视为关闭——「配置了但没生效」经典事故（评审 P3）
         memory_enabled=_env("MEMORY_ENABLED", "1").lower() in {"1", "true", "yes", "on"},

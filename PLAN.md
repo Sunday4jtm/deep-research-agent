@@ -280,3 +280,14 @@ MIT（最大传播）vs PolyForm Strict（与老项目一致）；新仓库依�
 | 重要发现 | **换免费模型的代价=注入防御崩塌**：商汤 6.8-flash-lite 在全部 4 次注入题中都执行了金丝雀指令（DeepSeek 只失守 1/4）——P2-17 升级为 P1，候选修复=注入告警升级为证据级排除 |
 | 顺带修复 | 评测裁判结果"先写后算"丢失 → 回写 jsonl；夹具跑分污染跨 run 记忆 → MEMORY_ENABLED 隔离 |
 | 修复落地（2026-11-05） | `INJECTION_FILTER=strict` 强过滤上线：流水线证据级隔离出综合 prompt + 报告命中行剥除（流式路径 reset 重发终稿）+ ReAct 观察脱敏；离线门禁测试（"复读机"假模型也拦得住）。顺带：ReAct 补主备降级（此前只取 chain[0]，限流即死）与 Langfuse trace（此前显式空 callbacks 不可观测）；文档对账（AGENTS.md 三端表述、README 双模型链、事件表补 thought） |
+
+## 十三、检索层 Subagents 模式（2026-11-07，评估 P2 项落地：档①→档②）
+
+| 项 | 内容 |
+|---|---|
+| 动机 | 评估对照官方 multi-agent 界定（独立 LLM 循环+专属工具+私有上下文+自身终止条件）：原 retriever 是"执行清单"，节点非自治 Agent。Subagents 模式把决策权下放到检索层——每子问题一个自带消息历史的子 Agent，自主决定查什么工具、查几次、要不要 web_fetch 深读 |
+| 实现 | app/subagents.py（纯 Python 消息循环，与 agent_loop 同款形态）+ nodes retriever 双模式分发；证据由主图统一重编全局 E#、跨子问题规范化去重、errors/subq_evidence 消费与 parallel 完全同构——下游（verifier/synthesizer/citation/前端/记忆）零感知 |
+| 红线对齐 | 不引 LangGraph subgraph/checkpoint（子 Agent 是函数循环不是子图）；无 chat Key 自动回落 parallel（Agent 化不作新故障点，warning 可见）；单子 Agent 崩溃记 errors 留缺口交 gap 回环 |
+| 开关 | `RETRIEVAL_MODE=parallel（默认基线）| subagents` + `SUBAGENT_MAX_STEPS=3`（步数熔断）；无 chat Key 自动回落；已同步 .env.example |
+| 深读语义 | web_fetch 对已登记来源就地替换为全文摘录（编号不变，消息引用不失效，全局去重不丢深读）；新来源正常入册 |
+| 验收 | 离线测试 6 条（全局重编/步数熔断/全败留缺口/无 Key 回落/fetch 覆盖/思考链上屏），150 绿；实调评测待 DeepSeek 通道恢复（§十二 暂缓项同批） |
