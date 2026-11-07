@@ -110,6 +110,9 @@
   #stats b { font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums; }
   #stats b.bad { color: var(--err); }
 
+  /* 返回路径：读完全部产出后一键回到输入页（此前完成态只能刷新页面才能再问） */
+  #again { display: none; margin-top: 24px; }
+
   /* 事件审计：塌缩为一行计数（Perplexity "Completed N steps" 同款），展开仍是全量 JSON */
   #logWrap { display: none; margin-top: 30px; border-top: 1px solid var(--border-soft); padding-top: 12px; }
   #logWrap summary { cursor: pointer; font-family: var(--mono); font-size: 11.5px; color: var(--faint); }
@@ -153,6 +156,7 @@
     <div id="sources"></div>
     <div id="reportDoc"><div id="report"></div></div>
     <div id="stats"></div>
+    <button id="again" class="chip" type="button">新研究</button>
     <details id="logWrap"><summary id="logCount"></summary><div id="log"></div></details>
   </section>
 
@@ -218,6 +222,15 @@ for (const b of document.querySelectorAll(".mode-chip")) {
 const setUI = (home, run) => { $("home").style.display = home; $("run").style.display = run; };
 const setDot = (cls) => { $("dot").className = "dot " + cls; };
 const showErr = (msg) => { $("errbox").textContent = msg; $("errbox").style.display = "block"; };
+/* 返回路径：回到输入页并保留上次问题（改写即可重问）；错误框必须一并清掉，
+   否则它会挂在 main 层跟着首页出现——errbox 不属于 run 区块 */
+const backHome = () => {
+  setUI("block", "none");
+  $("errbox").style.display = "none";
+  $("again").style.display = "none";
+  window.scrollTo({ top: 0 });
+  $("q").focus();
+};
 
 let roundN = 0, srcN = 0, text = "";
 const renderMeta = () => {
@@ -247,6 +260,7 @@ async function start() {
   $("logWrap").style.display = "none"; $("logWrap").open = false; $("logCount").textContent = "";
   $("stats").innerHTML = ""; $("stats").style.display = "none";
   $("reportDoc").style.display = "none"; $("errbox").style.display = "none";
+  $("again").style.display = "none";
   $("thoughts").innerHTML = "";
   roundN = 0; srcN = 0; text = ""; renderMeta();
   setDot("run");
@@ -292,6 +306,8 @@ async function start() {
   $("go").disabled = false;
   if (renderTimer) { clearTimeout(renderTimer); renderTimer = null; }
   doRender();  // 收尾渲染：去 caret，确保节流器手里最后一批 delta 一定上屏
+  // done/error/断流都会走到这里（网关关流即收尾）——三种终态都该有返回路径
+  $("again").style.display = "inline-block";
 
   function handle(ev) {
     const p = ev.payload || {};
@@ -358,6 +374,7 @@ async function start() {
 }
 
 $("go").onclick = start;
+$("again").onclick = backHome;
 $("q").addEventListener("keydown", (e) => {
   if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); start(); }
 });
