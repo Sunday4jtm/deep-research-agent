@@ -37,7 +37,7 @@ from eval.questions import QUESTIONS
 FIXTURE_KINDS = {"private", "conflict", "injection"}
 
 
-def run_one(q, mode: str) -> dict:
+def run_one(q, mode: str, allow_billed: bool = False) -> dict:
     """单题单模式单次：返回该 run 的全部指标与现场（report 全文留档）。
 
     模式切换经进程环境 + settings 缓存清理实现；【必须还原】——评测
@@ -67,10 +67,13 @@ def run_one(q, mode: str) -> dict:
     os.environ["AGENT_MODE"] = "research"
     # 免费保障（用户指示 2026-11-02）：评测全程禁用 DeepSeek（计费），
     # chat 自动落到商汤公测免费档；恢复后仅影响本进程，.env 原样。
+    # --allow-deepseek 显式豁免（2026-11-07 用户拍板：web/hybrid 4 题跑公网侧，
+    # DeepSeek search/fetch ¥5/1000 次成功请求、失败不计费，全程约 ¥1 量级）。
     # 夹具跑分也不得写跨 run 记忆：必须显式置 "0"。为什么不能 pop——config
     # 读 MEMORY_ENABLED 的默认值是 "1"（开启），pop 掉等于把评测期间的记忆
     # 反向打开（评审 P0-2）
-    os.environ.pop("DEEPSEEK_API_KEY", None)
+    if not allow_billed:
+        os.environ.pop("DEEPSEEK_API_KEY", None)
     os.environ["MEMORY_ENABLED"] = "0"
     get_settings.cache_clear()
     try:
@@ -138,6 +141,11 @@ def main() -> None:
         "--kinds", default="", help="只跑指定类型（逗号分隔，如 private,conflict,injection）"
     )
     parser.add_argument("--out", default="eval/results")
+    parser.add_argument(
+        "--allow-deepseek",
+        action="store_true",
+        help="允许 DeepSeek 计费调用（web/hybrid 题跑公网侧需要；默认 pop Key 免费保障）",
+    )
     parser.add_argument("--skip-judge", action="store_true", help="跳过 LLM 裁判（省时）")
     args = parser.parse_args()
 
@@ -163,11 +171,16 @@ def main() -> None:
     md_path = out_dir / f"summary_{stamp}.md"
 
     all_runs: list[dict] = []
+    if args.allow_deepseek:
+        print(
+            "⚠ --allow-deepseek：本次评测允许 DeepSeek 计费调用（仅 web/hybrid 题会真联网）",
+            flush=True,
+        )
     for q in questions:
         for mode in modes:
             for repeat in range(args.repeat):
                 try:
-                    run = run_one(q, mode)
+                    run = run_one(q, mode, allow_billed=args.allow_deepseek)
                 except Exception as exc:  # noqa: BLE001 —— 单题崩溃不让整批报废
                     # 一次 provider 抖动此前会让后续题目全部不跑、summary 不
                     # 生成（评审 P2）；jsonl 增量写已保住已跑部分，这里补错误行

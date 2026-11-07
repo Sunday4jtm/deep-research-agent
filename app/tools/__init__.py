@@ -11,39 +11,52 @@ from __future__ import annotations
 
 import contextlib
 import threading
+from collections.abc import Callable
 
 from app.config import get_settings
 from app.tools.base import Evidence, ToolProvider
 from app.tools.fake import FakeProvider
 
-_KNOWN_MODES = ("fake", "direct", "mcp")
+
+def _build_direct() -> ToolProvider:
+    from app.tools.direct import DirectProvider
+
+    return DirectProvider()
+
+
+def _build_mcp() -> ToolProvider:
+    from app.tools.mcp_provider import MCPProvider
+
+    return MCPProvider()
+
+
+# 注册制工厂（评估 P3 项）：新增 provider（如未来 Tavily）落一行登记而不是改
+# if/elif 链——"插件化"从口号变成一行注册。依赖重的实现（mcp/direct）用惰性
+# 包装：SDK 缺失只在真用到该模式时才暴露，fake 路径（CI/离线）永不 import 它们
+_PROVIDER_FACTORIES: dict[str, Callable[[], ToolProvider]] = {
+    "fake": FakeProvider,
+    "direct": _build_direct,
+    "mcp": _build_mcp,
+}
+
 _providers: dict[str, ToolProvider] = {}
 _provider_lock = threading.Lock()
 
 
 def get_provider() -> ToolProvider:
     mode = get_settings().provider_mode
-    if mode not in _KNOWN_MODES:
+    factory = _PROVIDER_FACTORIES.get(mode)
+    if factory is None:
         # 未知模式必须在缓存之前就报错：错的配置不能被单例"焊死"
-        raise ValueError(f"未知 PROVIDER_MODE：{mode}（可选 fake | direct | mcp）")
+        raise ValueError(
+            f"未知 PROVIDER_MODE：{mode}（可选 {' | '.join(_PROVIDER_FACTORIES)}）"
+        )
     with _provider_lock:  # 加锁单飞：与 llm.py 同款，防并发首调重复建实例
         provider = _providers.get(mode)
         if provider is None:
-            provider = _build_provider(mode)
+            provider = factory()
             _providers[mode] = provider
         return provider
-
-
-def _build_provider(mode: str) -> ToolProvider:
-    if mode == "fake":
-        return FakeProvider()
-    if mode == "direct":
-        from app.tools.direct import DirectProvider
-
-        return DirectProvider()
-    from app.tools.mcp_provider import MCPProvider
-
-    return MCPProvider()
 
 
 def reset_provider_cache() -> None:
