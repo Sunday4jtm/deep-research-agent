@@ -3,8 +3,8 @@
 > LangGraph 编排的多跳研究 Agent：私有知识库与公网搜索经 **MCP 协议**接入为工具，
 > 规划 → 混合检索 → 交叉验证（追问回环）→ 带引用报告，全链路 Langfuse 可追踪。
 >
-> 面试作品，姊妹项目《AI 学习监督员》（私有 RAG 问答）的进化篇：
-> 那个项目回答"我把 RAG 做可靠了"，这个项目回答"**我把 RAG 变成了 Agent**"。
+> 一个端口跑通演示（`PROVIDER_MODE=fake` 时零 Key 离线可复现），
+> 评测基线与注入防御实证见 [eval/BASELINE.md](eval/BASELINE.md)。
 
 [![CI](https://github.com/Sunday4jtm/deep-research-agent/actions/workflows/ci.yml/badge.svg)](../../actions)
 
